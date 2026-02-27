@@ -1,6 +1,6 @@
 ---
 name: codex-token-usage-dashboard
-description: Build, refresh, and customize a local Codex token usage dashboard served on 127.0.0.1:8765 from ~/.codex/sessions data. Use when the user asks for YTD/daily token usage updates, chart/stat card changes, date-range/preset behavior, refresh cadence updates, or recalc-service troubleshooting.
+description: Build, refresh, and customize a local Codex+Claude token usage dashboard served on 127.0.0.1:8765 from ~/.codex/sessions and ~/.claude/projects data. Use when the user asks for provider-specific token usage updates, chart/stat card changes, date-range/preset behavior, refresh cadence updates, or recalc-service troubleshooting.
 ---
 
 # Codex Token Usage Dashboard
@@ -8,7 +8,7 @@ description: Build, refresh, and customize a local Codex token usage dashboard s
 ## Overview
 
 Use this skill to maintain a local token-usage dashboard that:
-- Reads session data from `~/.codex/sessions`
+- Reads session data from `~/.codex/sessions` and `~/.claude/projects`
 - Recalculates stats/tables via a local Python service
 - Serves the dashboard at `http://127.0.0.1:8765/`
 
@@ -44,12 +44,14 @@ Primary files:
 - Defaults:
   - Host: `127.0.0.1`
   - Port: `8765`
-  - Sessions root: `~/.codex/sessions`
+  - Codex sessions root: `~/.codex/sessions`
+  - Claude projects root: `~/.claude/projects`
   - Dashboard HTML: `dashboard/index.html`
 - Override with env vars:
   - `CODEX_USAGE_SERVER_HOST`
   - `CODEX_USAGE_SERVER_PORT`
   - `CODEX_USAGE_SESSIONS_ROOT`
+  - `CODEX_USAGE_CLAUDE_PROJECTS_ROOT`
   - `CODEX_USAGE_DASHBOARD_HTML`
 
 ## Guardrails

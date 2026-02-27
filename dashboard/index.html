@@ -476,7 +476,7 @@
     <section class="panel hero">
       <h1>Codex Token Usage Dashboard</h1>
       <div class="meta">
-        <span class="chip">Source: ~/.codex/sessions</span>
+        <span id="usageSourceChip" class="chip">Sources: ~/.codex/sessions + ~/.claude/projects</span>
         <span id="autoRecalcStatus" class="chip">Auto-recalc: waiting for refresh</span>
         <span id="lastRefreshTime" class="chip">Last refresh: --</span>
       </div>
@@ -486,6 +486,14 @@
       <div class="usage-chart-head">
         <h2 class="usage-chart-title">Time Range</h2>
         <div class="usage-chart-controls">
+          <div class="usage-chart-control-group">
+            <label for="usageProvider">Provider</label>
+            <select id="usageProvider" class="usage-chart-sort" aria-label="Usage provider">
+              <option value="combined">Combined</option>
+              <option value="codex">Codex</option>
+              <option value="claude">Claude</option>
+            </select>
+          </div>
           <div class="usage-chart-control-group">
             <label for="usageRangePreset">Range</label>
             <select id="usageRangePreset" class="usage-chart-sort" aria-label="Preset usage date ranges">
@@ -633,15 +641,139 @@
           </tbody>
         </table>
       </div>
-      <p class="foot">Generated from local Codex session history. Values shown are daily total tokens.</p>
+      <p class="foot">Generated from local Codex and Claude session history. Values shown are daily total tokens.</p>
     </section>
   </main>
+  <script id="usageDataset" type="application/json">{"generated_at":null,"timezone":"local","paths":{"codex_sessions_root":"~/.codex/sessions","claude_projects_root":"~/.claude/projects"},"providers_available":{"codex":true,"claude":false,"combined":true},"providers":{"codex":{"rows":[]},"claude":{"rows":[]},"combined":{"rows":[]}}}</script>
   <script>
     const autoRecalcChip = document.getElementById("autoRecalcStatus");
     const lastRefreshChip = document.getElementById("lastRefreshTime");
+    const sourceChip = document.getElementById("usageSourceChip");
+    const usageDatasetNode = document.getElementById("usageDataset");
     const autoRecalcFlag = "codexDashboardAutoRecalcPending";
     const lastRefreshStorageKey = "codexDashboardLastRefreshAt";
+    const sortStorageKey = "codexChartSort";
+    const rangeFromStorageKey = "codexChartRangeFrom";
+    const rangeToStorageKey = "codexChartRangeTo";
+    const rangePresetStorageKey = "codexChartRangePreset";
+    const providerStorageKey = "codexChartProvider";
     const autoRecalcEndpoint = "/recalc";
+
+    const sortSelect = document.getElementById("usageChartSort");
+    const providerSelect = document.getElementById("usageProvider");
+    const rangePresetSelect = document.getElementById("usageRangePreset");
+    const rangeFromInput = document.getElementById("usageRangeFrom");
+    const rangeToInput = document.getElementById("usageRangeTo");
+    const rangeClearBtn = document.getElementById("usageRangeClear");
+    const usageChartBars = document.getElementById("usageChartBars");
+    const usageChartMax = document.getElementById("usageChartMax");
+    const usageChartSessionsMax = document.getElementById("usageChartSessionsMax");
+    const usageChartNote = document.getElementById("usageChartNote");
+    const tableBody = document.querySelector("tbody");
+
+    const statCards = Array.from(document.querySelectorAll(".stats .stat"));
+    const statRangeTotal = statCards[0] ?? null;
+    const statRangeDays = statCards[1] ?? null;
+    const statRangeSessions = statCards[2] ?? null;
+    const statRangeHighest = statCards[3] ?? null;
+    const statToday = statCards[4] ?? null;
+    const statCurrentWeek = statCards[5] ?? null;
+    const statPreviousWeek = statCards[6] ?? null;
+    const statTwoWeeksAgo = statCards[7] ?? null;
+
+    const providerLabels = {
+      codex: "Codex",
+      claude: "Claude",
+      combined: "Combined",
+    };
+
+    const parseUsageDataset = () => {
+      if (!usageDatasetNode) return {};
+      try {
+        const parsed = JSON.parse(usageDatasetNode.textContent || "{}");
+        return parsed && typeof parsed === "object" ? parsed : {};
+      } catch {
+        return {};
+      }
+    };
+
+    const usageDataset = parseUsageDataset();
+
+    const formatNumber = (n) => n.toLocaleString("en-US");
+    const addDays = (dateObj, days) => {
+      const next = new Date(dateObj);
+      next.setDate(next.getDate() + days);
+      return next;
+    };
+    const toIsoDate = (dateObj) => {
+      const y = dateObj.getFullYear();
+      const m = String(dateObj.getMonth() + 1).padStart(2, "0");
+      const d = String(dateObj.getDate()).padStart(2, "0");
+      return `${y}-${m}-${d}`;
+    };
+    const parseIsoDate = (isoDate) => {
+      const [year, month, day] = String(isoDate || "").split("-").map(Number);
+      if (!Number.isFinite(year) || !Number.isFinite(month) || !Number.isFinite(day)) {
+        return new Date(NaN);
+      }
+      return new Date(year, month - 1, day);
+    };
+    const toDateOnly = (dateObj) => new Date(dateObj.getFullYear(), dateObj.getMonth(), dateObj.getDate());
+
+    const normalizeRows = (rows) => {
+      if (!Array.isArray(rows)) return [];
+      return rows
+        .map((row) => ({
+          date: String(row?.date || ""),
+          dateObj: parseIsoDate(row?.date),
+          sessions: Number(row?.sessions ?? 0),
+          total: Number(row?.total_tokens ?? row?.total ?? 0),
+        }))
+        .filter((item) => item.date && !Number.isNaN(item.dateObj.getTime()) && Number.isFinite(item.total));
+    };
+
+    const mergeRowSets = (rowsA, rowsB) => {
+      const byDate = new Map();
+      [...rowsA, ...rowsB].forEach((item) => {
+        const existing = byDate.get(item.date);
+        if (!existing) {
+          byDate.set(item.date, { ...item });
+          return;
+        }
+        existing.sessions += item.sessions;
+        existing.total += item.total;
+      });
+      return Array.from(byDate.values()).sort((a, b) => b.dateObj - a.dateObj);
+    };
+
+    const fallbackRowsFromDom = () => {
+      const rows = Array.from(document.querySelectorAll("tbody tr"));
+      return rows
+        .map((row) => ({
+          date: row.children[1]?.textContent?.trim() ?? "",
+          dateObj: parseIsoDate(row.children[1]?.textContent?.trim() ?? ""),
+          sessions: Number((row.children[2]?.textContent ?? "0").replace(/,/g, "").trim()),
+          total: Number((row.children[3]?.textContent ?? "0").replace(/,/g, "").trim()),
+        }))
+        .filter((item) => item.date && !Number.isNaN(item.dateObj.getTime()) && Number.isFinite(item.total));
+    };
+
+    const providerData = usageDataset?.providers || {};
+    const codexRows = normalizeRows(providerData?.codex?.rows);
+    const claudeRows = normalizeRows(providerData?.claude?.rows);
+    let combinedRows = normalizeRows(providerData?.combined?.rows);
+    const domFallbackRows = fallbackRowsFromDom();
+
+    const rowsByProvider = {
+      codex: codexRows.length ? codexRows : domFallbackRows,
+      claude: claudeRows,
+      combined: combinedRows.length ? combinedRows : mergeRowSets(codexRows.length ? codexRows : domFallbackRows, claudeRows),
+    };
+
+    if (!rowsByProvider.combined.length && rowsByProvider.codex.length) {
+      rowsByProvider.combined = [...rowsByProvider.codex];
+    }
+
     const setAutoRecalcStatus = (message) => {
       if (autoRecalcChip) autoRecalcChip.textContent = message;
     };
@@ -729,82 +861,102 @@
         });
     };
 
-    renderLastRefresh();
-
-    if (sessionStorage.getItem(autoRecalcFlag) === "1") {
-      sessionStorage.removeItem(autoRecalcFlag);
-      setAutoRecalcStatus("Auto-recalc: fresh snapshot loaded");
-    } else {
-      triggerRecalcAndReload("Auto-recalc: updating from local sessions...");
-    }
-
-    scheduleBoundaryRefresh();
-
-    document.querySelectorAll(".stat .value").forEach((el) => {
-      const raw = el.textContent.trim();
-      if (!/^\d[\d,]*$/.test(raw)) return;
-      const n = Number(raw.replace(/,/g, ""));
-      if (Number.isFinite(n)) el.textContent = n.toLocaleString("en-US");
-    });
-
-    const rows = Array.from(document.querySelectorAll("tbody tr"));
-    const sortSelect = document.getElementById("usageChartSort");
-    const rangePresetSelect = document.getElementById("usageRangePreset");
-    const rangeFromInput = document.getElementById("usageRangeFrom");
-    const rangeToInput = document.getElementById("usageRangeTo");
-    const rangeClearBtn = document.getElementById("usageRangeClear");
-    const usageChartBars = document.getElementById("usageChartBars");
-    const usageChartMax = document.getElementById("usageChartMax");
-    const usageChartSessionsMax = document.getElementById("usageChartSessionsMax");
-    const usageChartNote = document.getElementById("usageChartNote");
-    const statCards = Array.from(document.querySelectorAll(".stats .stat"));
-    const statRangeTotal = statCards[0] ?? null;
-    const statRangeDays = statCards[1] ?? null;
-    const statRangeSessions = statCards[2] ?? null;
-    const statRangeHighest = statCards[3] ?? null;
-
-    const formatNumber = (n) => n.toLocaleString("en-US");
-    const addDays = (dateObj, days) => {
-      const next = new Date(dateObj);
-      next.setDate(next.getDate() + days);
-      return next;
-    };
-    const toIsoDate = (dateObj) => {
-      const y = dateObj.getFullYear();
-      const m = String(dateObj.getMonth() + 1).padStart(2, "0");
-      const d = String(dateObj.getDate()).padStart(2, "0");
-      return `${y}-${m}-${d}`;
-    };
-    const parseIsoDate = (isoDate) => {
-      const [year, month, day] = isoDate.split("-").map(Number);
-      return new Date(year, (month || 1) - 1, day || 1);
+    const sourceTextForProvider = (provider) => {
+      const codexRoot = usageDataset?.paths?.codex_sessions_root || "~/.codex/sessions";
+      const claudeRoot = usageDataset?.paths?.claude_projects_root || "~/.claude/projects";
+      if (provider === "codex") return `Source: ${codexRoot}`;
+      if (provider === "claude") return `Source: ${claudeRoot}`;
+      return `Sources: ${codexRoot} + ${claudeRoot}`;
     };
 
-    const rowData = rows.map((row) => ({
-      row,
-      date: row.children[1]?.textContent?.trim() ?? "",
-      dateObj: parseIsoDate(row.children[1]?.textContent?.trim() ?? ""),
-      sessions: Number((row.children[2]?.textContent ?? "0").replace(/,/g, "").trim()),
-      total: Number((row.children[3]?.textContent ?? "0").replace(/,/g, "").trim()),
-    })).filter((item) => Number.isFinite(item.total) && !Number.isNaN(item.dateObj.getTime()));
+    const updateCard = (cardEl, labelText, valueText) => {
+      if (!cardEl) return;
+      const labelEl = cardEl.querySelector(".label");
+      const valueEl = cardEl.querySelector(".value");
+      if (labelEl) labelEl.textContent = labelText;
+      if (valueEl) valueEl.textContent = valueText;
+    };
 
-    const minDateObj = rowData.length
-      ? new Date(Math.min(...rowData.map((item) => item.dateObj.getTime())))
-      : new Date();
-    const maxDateObj = rowData.length
-      ? new Date(Math.max(...rowData.map((item) => item.dateObj.getTime())))
-      : new Date();
-    const minDateIso = toIsoDate(minDateObj);
-    const maxDateIso = toIsoDate(maxDateObj);
+    const sumRowsInDateRange = (rows, fromDate, toDate) => {
+      if (toDate < fromDate) return [0, 0];
+      return rows.reduce(
+        (acc, item) => {
+          if (item.dateObj >= fromDate && item.dateObj <= toDate) {
+            acc[0] += item.sessions;
+            acc[1] += item.total;
+          }
+          return acc;
+        },
+        [0, 0]
+      );
+    };
 
-    if (rangeFromInput) {
-      rangeFromInput.min = minDateIso;
-      rangeFromInput.max = maxDateIso;
-    }
-    if (rangeToInput) {
-      rangeToInput.min = minDateIso;
-      rangeToInput.max = maxDateIso;
-    }
+    const sortRows = (rows, sortKey) => {
+      const sorted = [...rows];
+      switch (sortKey) {
+        case "sessions-desc":
+          sorted.sort((a, b) => b.sessions - a.sessions || b.total - a.total || b.dateObj - a.dateObj);
+          break;
+        case "date-desc":
+          sorted.sort((a, b) => b.dateObj - a.dateObj || b.total - a.total);
+          break;
+        case "tokens-desc":
+        default:
+          sorted.sort((a, b) => b.total - a.total || b.sessions - a.sessions || b.dateObj - a.dateObj);
+          break;
+      }
+      return sorted;
+    };
+
+    const sortLabel = (sortKey) => {
+      switch (sortKey) {
+        case "sessions-desc":
+          return "sessions";
+        case "date-desc":
+          return "date";
+        case "tokens-desc":
+        default:
+          return "tokens";
+      }
+    };
+
+    let activeProvider = "combined";
+    let rowData = [];
+    let minDateObj = toDateOnly(new Date());
+    let maxDateObj = toDateOnly(new Date());
+    let minDateIso = toIsoDate(minDateObj);
+    let maxDateIso = toIsoDate(maxDateObj);
+
+    const applyProviderState = (provider) => {
+      if (!Object.prototype.hasOwnProperty.call(rowsByProvider, provider)) {
+        activeProvider = "combined";
+      } else {
+        activeProvider = provider;
+      }
+
+      rowData = [...(rowsByProvider[activeProvider] || [])].sort((a, b) => b.dateObj - a.dateObj);
+      if (rowData.length) {
+        minDateObj = new Date(Math.min(...rowData.map((item) => item.dateObj.getTime())));
+        maxDateObj = new Date(Math.max(...rowData.map((item) => item.dateObj.getTime())));
+      } else {
+        minDateObj = toDateOnly(new Date());
+        maxDateObj = toDateOnly(new Date());
+      }
+      minDateIso = toIsoDate(minDateObj);
+      maxDateIso = toIsoDate(maxDateObj);
+
+      if (rangeFromInput) {
+        rangeFromInput.min = minDateIso;
+        rangeFromInput.max = maxDateIso;
+      }
+      if (rangeToInput) {
+        rangeToInput.min = minDateIso;
+        rangeToInput.max = maxDateIso;
+      }
+      if (providerSelect) providerSelect.value = activeProvider;
+      if (sourceChip) sourceChip.textContent = sourceTextForProvider(activeProvider);
+      localStorage.setItem(providerStorageKey, activeProvider);
+    };
 
     const readDateValue = (inputEl, fallback) => {
       if (!inputEl?.value) return fallback;
@@ -841,47 +993,14 @@
       }
     };
 
-    const updateCard = (cardEl, labelText, valueText) => {
-      if (!cardEl) return;
-      const labelEl = cardEl.querySelector(".label");
-      const valueEl = cardEl.querySelector(".value");
-      if (labelEl) labelEl.textContent = labelText;
-      if (valueEl) valueEl.textContent = valueText;
-    };
-
-    const sortRows = (sortKey) => {
-      const sorted = [...rowData];
-      switch (sortKey) {
-        case "sessions-desc":
-          sorted.sort((a, b) => b.sessions - a.sessions || b.total - a.total || b.dateObj - a.dateObj);
-          break;
-        case "date-desc":
-          sorted.sort((a, b) => b.dateObj - a.dateObj || b.total - a.total);
-          break;
-        case "tokens-desc":
-        default:
-          sorted.sort((a, b) => b.total - a.total || b.sessions - a.sessions || b.dateObj - a.dateObj);
-          break;
-      }
-      return sorted;
-    };
-
-    const sortLabel = (sortKey) => {
-      switch (sortKey) {
-        case "sessions-desc":
-          return "sessions";
-        case "date-desc":
-          return "date";
-        case "tokens-desc":
-        default:
-          return "tokens";
-      }
-    };
-
     const clampRangeInputs = () => {
       if (!rangeFromInput || !rangeToInput) return;
       if (!rangeFromInput.value) rangeFromInput.value = minDateIso;
       if (!rangeToInput.value) rangeToInput.value = maxDateIso;
+
+      rangeFromInput.value = clampIso(rangeFromInput.value);
+      rangeToInput.value = clampIso(rangeToInput.value);
+
       if (rangeFromInput.value > rangeToInput.value) {
         rangeToInput.value = rangeFromInput.value;
       }
@@ -932,27 +1051,52 @@
 
     const saveRangeState = () => {
       if (!rangeFromInput || !rangeToInput) return;
-      localStorage.setItem("codexChartRangeFrom", rangeFromInput.value);
-      localStorage.setItem("codexChartRangeTo", rangeToInput.value);
-      if (rangePresetSelect) {
-        localStorage.setItem("codexChartRangePreset", rangePresetSelect.value);
-      }
+      localStorage.setItem(rangeFromStorageKey, rangeFromInput.value);
+      localStorage.setItem(rangeToStorageKey, rangeToInput.value);
+      if (rangePresetSelect) localStorage.setItem(rangePresetStorageKey, rangePresetSelect.value);
     };
 
-    const applyPresetRange = (presetKey, shouldRender = true) => {
-      if (!rangeFromInput || !rangeToInput) return;
-      if (presetKey === "custom") {
-        saveRangeState();
-        if (shouldRender) renderUsageChart();
-        return;
-      }
-      const [presetFrom, presetTo] = computePresetRange(presetKey);
-      rangeFromInput.value = clampIso(presetFrom);
-      rangeToInput.value = clampIso(presetTo);
-      clampRangeInputs();
-      if (rangePresetSelect) rangePresetSelect.value = presetKey;
-      saveRangeState();
-      if (shouldRender) renderUsageChart();
+    const renderTable = (rows) => {
+      if (!tableBody) return;
+      tableBody.innerHTML = rows
+        .map((item, index) => {
+          const rank = index + 1;
+          const rankClass = rank <= 3 ? "rank top-3" : "rank";
+          return `<tr><td><span class="${rankClass}">${rank}</span></td><td>${item.date}</td><td class="num">${item.sessions}</td><td class="num total-col">${formatNumber(item.total)}</td></tr>`;
+        })
+        .join("");
+    };
+
+    const updateWeekCards = () => {
+      const today = toDateOnly(new Date());
+      const yesterday = addDays(today, -1);
+      const currentMonday = addDays(today, -((today.getDay() + 6) % 7));
+      const prevMonday = addDays(currentMonday, -7);
+      const prevSunday = addDays(currentMonday, -1);
+      const prev2Monday = addDays(prevMonday, -7);
+      const prev2Sunday = addDays(prevMonday, -1);
+
+      const [todaySessions, todayTotal] = sumRowsInDateRange(rowData, today, today);
+      const [currentWeekSessions, currentWeekTotal] = sumRowsInDateRange(rowData, currentMonday, yesterday);
+      const [prevWeekSessions, prevWeekTotal] = sumRowsInDateRange(rowData, prevMonday, prevSunday);
+      const [prev2WeekSessions, prev2WeekTotal] = sumRowsInDateRange(rowData, prev2Monday, prev2Sunday);
+
+      updateCard(statToday, `Today (${toIsoDate(today)}, ${todaySessions} sessions)`, formatNumber(todayTotal));
+      updateCard(
+        statCurrentWeek,
+        `Current Week (${toIsoDate(currentMonday)} to ${toIsoDate(yesterday)}, ${currentWeekSessions} sessions)`,
+        formatNumber(currentWeekTotal)
+      );
+      updateCard(
+        statPreviousWeek,
+        `Previous Week (${toIsoDate(prevMonday)} to ${toIsoDate(prevSunday)}, ${prevWeekSessions} sessions)`,
+        formatNumber(prevWeekTotal)
+      );
+      updateCard(
+        statTwoWeeksAgo,
+        `2 Weeks Ago (${toIsoDate(prev2Monday)} to ${toIsoDate(prev2Sunday)}, ${prev2WeekSessions} sessions)`,
+        formatNumber(prev2WeekTotal)
+      );
     };
 
     const renderUsageChart = () => {
@@ -962,18 +1106,22 @@
       const fromDate = readDateValue(rangeFromInput, minDateObj);
       const toDate = readDateValue(rangeToInput, maxDateObj);
       const sortKey = sortSelect?.value || "tokens-desc";
-      const chartRows = sortRows(sortKey).filter((item) => item.dateObj >= fromDate && item.dateObj <= toDate);
+      const sortedRows = sortRows(rowData, sortKey);
+      const chartRows = sortedRows.filter((item) => item.dateObj >= fromDate && item.dateObj <= toDate);
       const rangeSessionsTotal = chartRows.reduce((sum, item) => sum + item.sessions, 0);
       const rangeTokensTotal = chartRows.reduce((sum, item) => sum + item.total, 0);
       const rangeHighestTokens = chartRows.length ? Math.max(...chartRows.map((item) => item.total), 0) : 0;
       const rangeLabel = rangePresetLabel();
+      const providerLabel = providerLabels[activeProvider] || "Combined";
 
       usageChartBars.innerHTML = "";
+      renderTable(chartRows);
+      updateWeekCards();
 
       if (!chartRows.length) {
         usageChartMax.textContent = "Tokens max: 0";
         if (usageChartSessionsMax) usageChartSessionsMax.textContent = "Sessions max: 0";
-        if (usageChartNote) usageChartNote.textContent = `No usage days in ${selectedRangeLabel()}.`;
+        if (usageChartNote) usageChartNote.textContent = `No usage days for ${providerLabel} in ${selectedRangeLabel()}.`;
         updateCard(statRangeTotal, `${rangeLabel} Total Tokens`, "0");
         updateCard(statRangeDays, `${rangeLabel} Days With Usage`, "0");
         updateCard(statRangeSessions, `${rangeLabel} Total Sessions`, "0");
@@ -995,7 +1143,7 @@
       updateCard(statRangeHighest, `${rangeLabel} Highest Single Day`, formatNumber(rangeHighestTokens));
       if (usageChartNote) {
         const dayWord = chartRows.length === 1 ? "day" : "days";
-        usageChartNote.textContent = `Showing ${chartRows.length} ${dayWord} in ${selectedRangeLabel()}, sorted by ${sortLabel(sortKey)}. Token and session bars use separate scales.`;
+        usageChartNote.textContent = `Showing ${chartRows.length} ${dayWord} for ${providerLabel} in ${selectedRangeLabel()}, sorted by ${sortLabel(sortKey)}. Token and session bars use separate scales.`;
       }
 
       chartRows.forEach((item, index) => {
@@ -1043,49 +1191,105 @@
         sessionsEl.textContent = `${formatNumber(item.sessions)} ${sessionWord}`;
 
         valueEl.append(tokenEl, sessionsEl);
-
         rowEl.append(rankEl, dateEl, trackGroupEl, valueEl);
         usageChartBars.appendChild(rowEl);
       });
     };
 
+    const applyPresetRange = (presetKey, shouldRender = true) => {
+      if (!rangeFromInput || !rangeToInput) return;
+      if (presetKey === "custom") {
+        saveRangeState();
+        if (shouldRender) renderUsageChart();
+        return;
+      }
+      const [presetFrom, presetTo] = computePresetRange(presetKey);
+      rangeFromInput.value = clampIso(presetFrom);
+      rangeToInput.value = clampIso(presetTo);
+      clampRangeInputs();
+      if (rangePresetSelect) rangePresetSelect.value = presetKey;
+      saveRangeState();
+      if (shouldRender) renderUsageChart();
+    };
+
+    const applyProviderAndRefresh = (provider) => {
+      applyProviderState(provider);
+      if (rangePresetSelect && rangePresetSelect.value !== "custom") {
+        applyPresetRange(rangePresetSelect.value, false);
+      } else {
+        clampRangeInputs();
+        saveRangeState();
+      }
+      renderUsageChart();
+    };
+
+    renderLastRefresh();
+    if (sessionStorage.getItem(autoRecalcFlag) === "1") {
+      sessionStorage.removeItem(autoRecalcFlag);
+      setAutoRecalcStatus("Auto-recalc: fresh snapshot loaded");
+    } else {
+      triggerRecalcAndReload("Auto-recalc: updating from local sessions...");
+    }
+    scheduleBoundaryRefresh();
+
+    const savedProvider = localStorage.getItem(providerStorageKey);
+    if (savedProvider && Object.prototype.hasOwnProperty.call(rowsByProvider, savedProvider)) {
+      activeProvider = savedProvider;
+    } else if (rowsByProvider.combined.length) {
+      activeProvider = "combined";
+    } else if (rowsByProvider.codex.length) {
+      activeProvider = "codex";
+    } else if (rowsByProvider.claude.length) {
+      activeProvider = "claude";
+    }
+    applyProviderState(activeProvider);
+
     if (sortSelect) {
-      const savedSort = localStorage.getItem("codexChartSort");
+      const savedSort = localStorage.getItem(sortStorageKey);
       if (savedSort && sortSelect.querySelector(`option[value="${savedSort}"]`)) {
         sortSelect.value = savedSort;
       }
       sortSelect.addEventListener("change", () => {
-        localStorage.setItem("codexChartSort", sortSelect.value);
+        localStorage.setItem(sortStorageKey, sortSelect.value);
         renderUsageChart();
       });
     }
 
+    if (providerSelect) {
+      providerSelect.value = activeProvider;
+      providerSelect.addEventListener("change", () => {
+        applyProviderAndRefresh(providerSelect.value);
+      });
+    }
+
     if (rangeFromInput && rangeToInput) {
-      const savedFrom = localStorage.getItem("codexChartRangeFrom");
-      const savedTo = localStorage.getItem("codexChartRangeTo");
-      rangeFromInput.value = savedFrom && savedFrom >= minDateIso && savedFrom <= maxDateIso ? savedFrom : minDateIso;
-      rangeToInput.value = savedTo && savedTo >= minDateIso && savedTo <= maxDateIso ? savedTo : maxDateIso;
+      const savedFrom = localStorage.getItem(rangeFromStorageKey);
+      const savedTo = localStorage.getItem(rangeToStorageKey);
+      rangeFromInput.value = savedFrom ? clampIso(savedFrom) : minDateIso;
+      rangeToInput.value = savedTo ? clampIso(savedTo) : maxDateIso;
       clampRangeInputs();
 
       if (rangePresetSelect) {
-        const savedPreset = localStorage.getItem("codexChartRangePreset");
+        const savedPreset = localStorage.getItem(rangePresetStorageKey);
         const validPreset = savedPreset && rangePresetSelect.querySelector(`option[value="${savedPreset}"]`)
           ? savedPreset
           : null;
+
         if (validPreset && validPreset !== "custom") {
           rangePresetSelect.value = validPreset;
           applyPresetRange(validPreset, false);
-        } else {
-          rangePresetSelect.value = inferPresetFromRange();
+        } else if (validPreset === "custom") {
+          rangePresetSelect.value = "custom";
           saveRangeState();
+        } else {
+          rangePresetSelect.value = "ytd";
+          applyPresetRange("ytd", false);
         }
       }
 
       const handleRangeChange = () => {
         clampRangeInputs();
-        if (rangePresetSelect) {
-          rangePresetSelect.value = inferPresetFromRange();
-        }
+        if (rangePresetSelect) rangePresetSelect.value = inferPresetFromRange();
         saveRangeState();
         renderUsageChart();
       };

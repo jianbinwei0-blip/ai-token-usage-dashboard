@@ -1,6 +1,6 @@
 # Codex Token Usage Dashboard
 
-A local HTML dashboard for Codex token usage that auto-recalculates on refresh from `~/.codex/sessions`.
+A local HTML dashboard for Codex and Claude token usage that auto-recalculates on refresh from local session data.
 
 ## Dashboard Screenshot
 
@@ -8,6 +8,7 @@ A local HTML dashboard for Codex token usage that auto-recalculates on refresh f
 
 ## Features
 
+- Provider toggle (`Combined`, `Codex`, `Claude`)
 - YTD stats cards (`YTD total`, `days`, `sessions`, `highest day`)
 - Today + calendar-week rollups
 - Daily breakdown table sorted by highest total tokens
@@ -26,6 +27,7 @@ A local HTML dashboard for Codex token usage that auto-recalculates on refresh f
 - macOS or Linux
 - Python 3.9+
 - Local Codex session logs in `~/.codex/sessions`
+- Local Claude project logs in `~/.claude/projects` (optional; dashboard still works without Claude data)
 
 ## Quick Start
 
@@ -54,6 +56,7 @@ Environment variables:
 - `CODEX_USAGE_SERVER_HOST` (default: `127.0.0.1`)
 - `CODEX_USAGE_SERVER_PORT` (default: `8765`)
 - `CODEX_USAGE_SESSIONS_ROOT` (default: `~/.codex/sessions`)
+- `CODEX_USAGE_CLAUDE_PROJECTS_ROOT` (default: `~/.claude/projects`)
 - `CODEX_USAGE_DASHBOARD_HTML` (default: `<repo>/dashboard/index.html`)
 
 ## Optional: Run as LaunchAgent (macOS)
@@ -82,7 +85,9 @@ curl http://127.0.0.1:8765/health
 
 ## Notes
 
-- The dashboard is designed for local use and reads only local Codex session logs.
+- The dashboard is designed for local use and reads local Codex and Claude session logs.
+- Claude request usage is deduplicated by `(sessionId, requestId)` and keeps the highest observed `output_tokens` for the request.
+- Claude total token metric is computed as `input_tokens + cache_creation_input_tokens + cache_read_input_tokens + output_tokens`.
 - No third-party services are required.
 
 ## Use as a Codex Skill

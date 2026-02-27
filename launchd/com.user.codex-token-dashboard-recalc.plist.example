@@ -34,6 +34,8 @@
       <string>8765</string>
       <key>CODEX_USAGE_SESSIONS_ROOT</key>
       <string>/ABSOLUTE/PATH/TO/.codex/sessions</string>
+      <key>CODEX_USAGE_CLAUDE_PROJECTS_ROOT</key>
+      <string>/ABSOLUTE/PATH/TO/.claude/projects</string>
     </dict>
   </dict>
 </plist>
