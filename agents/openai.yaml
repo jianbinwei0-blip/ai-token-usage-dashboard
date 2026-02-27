@@ -1,0 +1,4 @@
+interface:
+  display_name: "Codex Token Dashboard"
+  short_description: "Refresh and customize local token usage dashboard"
+  default_prompt: "Use $codex-token-usage-dashboard to recalc my local token stats and update the localhost dashboard."

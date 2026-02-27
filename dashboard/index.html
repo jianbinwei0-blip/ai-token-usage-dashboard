@@ -1,0 +1,1113 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Codex Token Usage Dashboard</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,700&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg: #f7f4ec;
+      --bg-accent: radial-gradient(1200px 480px at 8% -5%, rgba(192, 129, 22, 0.12), transparent 60%),
+        radial-gradient(1000px 420px at 98% -12%, rgba(44, 96, 140, 0.14), transparent 58%);
+      --surface: #fffdf9;
+      --surface-soft: #f4f0e6;
+      --border: rgba(58, 42, 21, 0.16);
+      --text: #2d2419;
+      --text-dim: #5f5140;
+      --accent: #2c608c;
+      --accent-2: #c08116;
+      --success: #1f7a4d;
+      --shadow: 0 16px 40px rgba(37, 27, 14, 0.08);
+    }
+
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --bg: #111416;
+        --bg-accent: radial-gradient(1100px 520px at 10% -10%, rgba(192, 129, 22, 0.13), transparent 58%),
+          radial-gradient(980px 420px at 95% -8%, rgba(53, 118, 170, 0.16), transparent 60%);
+        --surface: #181d20;
+        --surface-soft: #20272c;
+        --border: rgba(235, 223, 206, 0.14);
+        --text: #f4ede1;
+        --text-dim: #c4b8a8;
+        --accent: #74b6ea;
+        --accent-2: #e7af49;
+        --success: #6be1a2;
+        --shadow: 0 18px 42px rgba(0, 0, 0, 0.34);
+      }
+    }
+
+    * { box-sizing: border-box; min-width: 0; }
+
+    body {
+      margin: 0;
+      color: var(--text);
+      font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+      background: var(--bg-accent), var(--bg);
+      line-height: 1.45;
+    }
+
+    .wrap {
+      width: min(1180px, calc(100vw - 2rem));
+      margin: 1.2rem auto 2rem;
+      display: grid;
+      gap: 1rem;
+    }
+
+    .panel {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      box-shadow: var(--shadow);
+      padding: 1rem;
+    }
+
+    .hero h1 {
+      margin: 0;
+      font-family: "Fraunces", Georgia, serif;
+      font-size: clamp(1.5rem, 2.8vw, 2.2rem);
+      letter-spacing: 0.01em;
+    }
+
+    .hero p {
+      margin: 0.55rem 0 0;
+      color: var(--text-dim);
+      font-size: 0.95rem;
+    }
+
+    .meta {
+      margin-top: 0.8rem;
+      font-size: 0.82rem;
+      color: var(--text-dim);
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.65rem;
+    }
+
+    .meta .chip {
+      background: var(--surface-soft);
+      border: 1px solid var(--border);
+      border-radius: 999px;
+      padding: 0.22rem 0.55rem;
+    }
+
+    .stats {
+      display: grid;
+      gap: 0.75rem;
+      grid-template-columns: repeat(4, minmax(230px, 1fr));
+    }
+
+    @media (max-width: 1100px) {
+      .stats { grid-template-columns: repeat(2, minmax(220px, 1fr)); }
+    }
+
+    @media (max-width: 640px) {
+      .stats { grid-template-columns: 1fr; }
+    }
+
+    .stat {
+      background: linear-gradient(180deg, color-mix(in srgb, var(--surface-soft) 82%, transparent), transparent);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 0.8rem 0.9rem;
+    }
+
+    .stat .label {
+      font-size: 0.72rem;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: var(--text-dim);
+      margin-bottom: 0.45rem;
+    }
+
+    .stat .value {
+      font-size: clamp(0.92rem, 1.75vw, 1.28rem);
+      font-weight: 600;
+      color: var(--accent);
+      font-variant-numeric: tabular-nums;
+      line-height: 1.2;
+      overflow-wrap: anywhere;
+      word-break: break-word;
+    }
+
+    .usage-chart {
+      display: grid;
+      gap: 0.65rem;
+      margin-bottom: 0.95rem;
+      padding: 0.85rem;
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      background: linear-gradient(180deg, color-mix(in srgb, var(--surface-soft) 70%, transparent), transparent);
+    }
+
+    .usage-chart-head {
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: space-between;
+      gap: 0.45rem 0.8rem;
+      align-items: baseline;
+    }
+
+    .range-panel .usage-chart-head {
+      align-items: center;
+    }
+
+    .range-panel .usage-chart-controls {
+      justify-content: flex-start;
+      width: 100%;
+    }
+
+    .usage-chart-controls {
+      display: inline-flex;
+      flex-wrap: wrap;
+      gap: 0.45rem;
+      align-items: center;
+      font-size: 0.72rem;
+      color: var(--text-dim);
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+      justify-content: flex-end;
+    }
+
+    .usage-chart-control-group {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.35rem;
+      padding: 0.15rem 0;
+    }
+
+    .usage-chart-sort {
+      min-height: 1.9rem;
+      border-radius: 10px;
+      border: 1px solid var(--border);
+      background: var(--surface-soft);
+      color: var(--text);
+      padding: 0.35rem 0.5rem;
+      font: inherit;
+      letter-spacing: normal;
+      text-transform: none;
+      font-size: 0.75rem;
+    }
+
+    .usage-chart-date-input {
+      min-height: 1.9rem;
+      border-radius: 10px;
+      border: 1px solid var(--border);
+      background: var(--surface-soft);
+      color: var(--text);
+      padding: 0.35rem 0.5rem;
+      font: inherit;
+      font-size: 0.75rem;
+      letter-spacing: normal;
+      text-transform: none;
+      min-width: 8.6rem;
+    }
+
+    .usage-chart-btn {
+      min-height: 1.9rem;
+      border-radius: 10px;
+      border: 1px solid var(--border);
+      background: color-mix(in srgb, var(--surface-soft) 70%, transparent);
+      color: var(--text-dim);
+      padding: 0.35rem 0.55rem;
+      font: inherit;
+      font-size: 0.72rem;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+      cursor: pointer;
+      transition: background 140ms ease, color 140ms ease, border-color 140ms ease;
+    }
+
+    .usage-chart-btn:hover {
+      background: color-mix(in srgb, var(--accent) 14%, var(--surface-soft));
+      color: var(--text);
+      border-color: color-mix(in srgb, var(--accent) 52%, var(--border));
+    }
+
+    .usage-chart-btn:focus-visible,
+    .usage-chart-sort:focus-visible,
+    .usage-chart-date-input:focus-visible {
+      outline: 2px solid color-mix(in srgb, var(--accent) 72%, transparent);
+      outline-offset: 1px;
+    }
+
+    .usage-chart-title {
+      margin: 0;
+      font-size: 0.9rem;
+      letter-spacing: 0.02em;
+      text-transform: uppercase;
+      color: var(--text-dim);
+    }
+
+    .usage-chart-summary {
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: space-between;
+      align-items: baseline;
+      gap: 0.3rem 0.75rem;
+    }
+
+    .usage-chart-note {
+      font-size: 0.74rem;
+      color: var(--text-dim);
+      font-variant-numeric: tabular-nums;
+      flex: 1 1 420px;
+      min-width: 220px;
+    }
+
+    .usage-chart-axis {
+      display: flex;
+      font-size: 0.72rem;
+      color: var(--text-dim);
+      font-variant-numeric: tabular-nums;
+      letter-spacing: 0.03em;
+    }
+
+    .usage-chart-axis-values {
+      display: inline-flex;
+      gap: 0.55rem;
+      align-items: center;
+      justify-content: flex-end;
+      text-align: right;
+      white-space: nowrap;
+    }
+
+    .usage-chart-bars {
+      display: grid;
+      gap: 0.45rem;
+      max-height: none;
+      overflow: visible;
+      padding-right: 0.25rem;
+    }
+
+    .usage-chart-row {
+      display: grid;
+      grid-template-columns: minmax(48px, 58px) minmax(102px, 124px) minmax(220px, 1fr) minmax(96px, 128px);
+      gap: 0.55rem;
+      align-items: center;
+      font-size: 0.77rem;
+    }
+
+    .usage-chart-rank {
+      display: inline-grid;
+      place-items: center;
+      width: 2.2rem;
+      height: 1.35rem;
+      border-radius: 999px;
+      border: 1px solid var(--border);
+      background: color-mix(in srgb, var(--surface-soft) 84%, transparent);
+      color: var(--text);
+      font-weight: 600;
+      font-size: 0.72rem;
+      font-variant-numeric: tabular-nums;
+    }
+
+    .usage-chart-rank.top-3 {
+      background: color-mix(in srgb, var(--accent-2) 40%, transparent);
+      border-color: color-mix(in srgb, var(--accent-2) 70%, var(--border));
+    }
+
+    .usage-chart-date {
+      color: var(--text-dim);
+      font-variant-numeric: tabular-nums;
+      white-space: nowrap;
+    }
+
+    .usage-chart-track {
+      position: relative;
+      height: 0.74rem;
+      border-radius: 999px;
+      border: 1px solid color-mix(in srgb, var(--border) 90%, transparent);
+      background: color-mix(in srgb, var(--surface-soft) 82%, var(--surface));
+      overflow: hidden;
+    }
+
+    .usage-chart-track-group {
+      display: grid;
+      gap: 0.16rem;
+    }
+
+    .usage-chart-track--sessions {
+      height: 0.52rem;
+      border-color: color-mix(in srgb, var(--accent) 38%, var(--border));
+      background: color-mix(in srgb, var(--accent) 10%, var(--surface-soft));
+    }
+
+    .usage-chart-fill {
+      height: 100%;
+      border-radius: inherit;
+      background: linear-gradient(
+        90deg,
+        color-mix(in srgb, var(--accent) 72%, var(--accent-2)),
+        color-mix(in srgb, var(--accent-2) 74%, var(--accent))
+      );
+      box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--surface) 28%, transparent);
+      transition: width 240ms ease;
+    }
+
+    .usage-chart-fill--sessions {
+      background: linear-gradient(
+        90deg,
+        color-mix(in srgb, var(--success) 78%, var(--accent)),
+        color-mix(in srgb, var(--accent) 68%, var(--success))
+      );
+    }
+
+    .usage-chart-value {
+      display: grid;
+      justify-items: end;
+      gap: 0.05rem;
+      font-variant-numeric: tabular-nums;
+    }
+
+    .usage-chart-token {
+      color: var(--success);
+      font-weight: 600;
+      white-space: nowrap;
+    }
+
+    .usage-chart-sessions {
+      color: var(--text-dim);
+      font-size: 0.67rem;
+      white-space: nowrap;
+    }
+
+    .usage-chart-empty {
+      font-size: 0.78rem;
+      color: var(--text-dim);
+      padding: 0.35rem 0.2rem;
+    }
+
+    @media (max-width: 760px) {
+      .usage-chart-row {
+        grid-template-columns: minmax(44px, 52px) minmax(84px, 96px) 1fr minmax(88px, 104px);
+        font-size: 0.72rem;
+      }
+    }
+
+    .table-wrap {
+      overflow: auto;
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      background: var(--surface);
+    }
+
+    table {
+      width: 100%;
+      border-collapse: separate;
+      border-spacing: 0;
+      min-width: 760px;
+      font-size: 0.9rem;
+    }
+
+    thead th {
+      position: sticky;
+      top: 0;
+      z-index: 2;
+      text-align: left;
+      padding: 0.78rem 0.85rem;
+      background: color-mix(in srgb, var(--surface-soft) 82%, transparent);
+      border-bottom: 1px solid var(--border);
+      font-size: 0.76rem;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: var(--text-dim);
+      backdrop-filter: blur(3px);
+      white-space: nowrap;
+    }
+
+    tbody td {
+      padding: 0.7rem 0.85rem;
+      border-bottom: 1px solid color-mix(in srgb, var(--border) 72%, transparent);
+      font-variant-numeric: tabular-nums;
+      white-space: nowrap;
+    }
+
+    tbody tr:nth-child(even) {
+      background: color-mix(in srgb, var(--surface-soft) 48%, transparent);
+    }
+
+    tbody tr:hover {
+      background: color-mix(in srgb, var(--accent) 12%, var(--surface));
+    }
+
+    .num { text-align: right; }
+
+    .rank {
+      display: inline-grid;
+      place-items: center;
+      width: 1.7rem;
+      height: 1.7rem;
+      border-radius: 999px;
+      background: color-mix(in srgb, var(--accent-2) 26%, transparent);
+      color: var(--text);
+      border: 1px solid var(--border);
+      font-size: 0.78rem;
+      font-weight: 600;
+    }
+
+    .top-3 {
+      background: color-mix(in srgb, var(--accent-2) 42%, transparent);
+      border-color: color-mix(in srgb, var(--accent-2) 72%, var(--border));
+    }
+
+    .total-col {
+      color: var(--success);
+      font-weight: 600;
+    }
+
+    .foot {
+      font-size: 0.78rem;
+      color: var(--text-dim);
+      padding: 0.15rem 0.2rem;
+    }
+
+    .table-wrap,
+    .foot {
+      display: none;
+    }
+  </style>
+</head>
+<body>
+  <main class="wrap">
+    <section class="panel hero">
+      <h1>Codex Token Usage Dashboard</h1>
+      <p>Daily totals ranked highest to lowest for <strong>2026-01-01</strong> through <strong>2026-02-26</strong>.</p>
+      <div class="meta">
+        <span class="chip">Source: ~/.codex/sessions</span>
+        <span id="autoRecalcStatus" class="chip">Auto-recalc: waiting for refresh</span>
+        <span id="lastRefreshTime" class="chip">Last refresh: --</span>
+      </div>
+    </section>
+
+    <section class="panel range-panel">
+      <div class="usage-chart-head">
+        <h2 class="usage-chart-title">Time Range</h2>
+        <div class="usage-chart-controls">
+          <div class="usage-chart-control-group">
+            <label for="usageRangePreset">Range</label>
+            <select id="usageRangePreset" class="usage-chart-sort" aria-label="Preset usage date ranges">
+              <option value="wtd">Week to Date</option>
+              <option value="mtd">Month to Date</option>
+              <option value="ytd">Year to Date</option>
+              <option value="last7">Past 7 Days</option>
+              <option value="last30">Past 30 Days</option>
+              <option value="last90">Past 90 Days</option>
+              <option value="all">All Available</option>
+              <option value="custom">Custom</option>
+            </select>
+          </div>
+          <div class="usage-chart-control-group">
+            <label for="usageRangeFrom">From</label>
+            <input id="usageRangeFrom" class="usage-chart-date-input" type="date" aria-label="Usage range from date">
+          </div>
+          <div class="usage-chart-control-group">
+            <label for="usageRangeTo">To</label>
+            <input id="usageRangeTo" class="usage-chart-date-input" type="date" aria-label="Usage range to date">
+            <button id="usageRangeClear" type="button" class="usage-chart-btn" aria-label="Reset usage date range">Reset</button>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="stats">
+      <article class="stat">
+        <div class="label">YTD Total Tokens</div>
+        <div class="value">3,130,984,337</div>
+      </article>
+      <article class="stat">
+        <div class="label">Days With Usage</div>
+        <div class="value">48</div>
+      </article>
+      <article class="stat">
+        <div class="label">Total Sessions</div>
+        <div class="value">429</div>
+      </article>
+      <article class="stat">
+        <div class="label">Highest Single Day</div>
+        <div class="value">301,026,803</div>
+      </article>
+      <article class="stat">
+        <div class="label">Today (2026-02-26, 39 sessions)</div>
+        <div class="value">138,327,106</div>
+      </article>
+      <article class="stat">
+        <div class="label">Current Week (2026-02-23 to 2026-02-25, 45 sessions)</div>
+        <div class="value">349,613,033</div>
+      </article>
+      <article class="stat">
+        <div class="label">Previous Week (2026-02-16 to 2026-02-22, 62 sessions)</div>
+        <div class="value">232,045,318</div>
+      </article>
+      <article class="stat">
+        <div class="label">2 Weeks Ago (2026-02-09 to 2026-02-15, 95 sessions)</div>
+        <div class="value">596,214,660</div>
+      </article>
+    </section>
+
+    <section class="panel">
+      <div class="usage-chart" aria-label="Daily usage bar chart">
+        <div class="usage-chart-head">
+          <h2 class="usage-chart-title">Usage Bar Chart</h2>
+          <div class="usage-chart-controls">
+            <div class="usage-chart-control-group">
+              <label for="usageChartSort">Sort</label>
+              <select id="usageChartSort" class="usage-chart-sort" aria-label="Sort usage chart">
+                <option value="tokens-desc">Tokens (High to Low)</option>
+                <option value="sessions-desc">Sessions (High to Low)</option>
+                <option value="date-desc">Date (Newest First)</option>
+              </select>
+            </div>
+          </div>
+        </div>
+        <div class="usage-chart-summary">
+          <div id="usageChartNote" class="usage-chart-note">Daily usage distribution.</div>
+          <span class="usage-chart-axis-values">
+            <span id="usageChartMax">Tokens max: 0</span>
+            <span id="usageChartSessionsMax">Sessions max: 0</span>
+          </span>
+        </div>
+        <div id="usageChartBars" class="usage-chart-bars" role="img" aria-label="Horizontal bar chart of daily token usage"></div>
+      </div>
+      <div class="table-wrap">
+        <table aria-label="Codex daily token usage rank table">
+          <thead>
+            <tr>
+              <th>Rank</th>
+              <th>Date</th>
+              <th class="num">Sessions</th>
+              <th class="num">Total Tokens</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr><td><span class="rank top-3">1</span></td><td>2026-01-29</td><td class="num">12</td><td class="num total-col">301,026,803</td></tr>
+            <tr><td><span class="rank top-3">2</span></td><td>2026-02-24</td><td class="num">20</td><td class="num total-col">184,024,966</td></tr>
+            <tr><td><span class="rank top-3">3</span></td><td>2026-02-05</td><td class="num">21</td><td class="num total-col">173,554,472</td></tr>
+            <tr><td><span class="rank">4</span></td><td>2026-02-10</td><td class="num">9</td><td class="num total-col">169,877,011</td></tr>
+            <tr><td><span class="rank">5</span></td><td>2026-02-08</td><td class="num">2</td><td class="num total-col">169,737,373</td></tr>
+            <tr><td><span class="rank">6</span></td><td>2026-02-06</td><td class="num">4</td><td class="num total-col">142,116,687</td></tr>
+            <tr><td><span class="rank">7</span></td><td>2026-02-26</td><td class="num">39</td><td class="num total-col">138,327,106</td></tr>
+            <tr><td><span class="rank">8</span></td><td>2026-02-23</td><td class="num">15</td><td class="num total-col">116,224,795</td></tr>
+            <tr><td><span class="rank">9</span></td><td>2026-02-21</td><td class="num">19</td><td class="num total-col">116,100,667</td></tr>
+            <tr><td><span class="rank">10</span></td><td>2026-02-15</td><td class="num">9</td><td class="num total-col">105,738,821</td></tr>
+            <tr><td><span class="rank">11</span></td><td>2026-02-04</td><td class="num">9</td><td class="num total-col">98,847,299</td></tr>
+            <tr><td><span class="rank">12</span></td><td>2026-02-14</td><td class="num">24</td><td class="num total-col">95,870,841</td></tr>
+            <tr><td><span class="rank">13</span></td><td>2026-01-13</td><td class="num">13</td><td class="num total-col">95,496,370</td></tr>
+            <tr><td><span class="rank">14</span></td><td>2026-02-02</td><td class="num">8</td><td class="num total-col">84,848,002</td></tr>
+            <tr><td><span class="rank">15</span></td><td>2026-02-09</td><td class="num">29</td><td class="num total-col">84,604,534</td></tr>
+            <tr><td><span class="rank">16</span></td><td>2026-02-11</td><td class="num">14</td><td class="num total-col">79,870,895</td></tr>
+            <tr><td><span class="rank">17</span></td><td>2026-01-21</td><td class="num">4</td><td class="num total-col">74,886,815</td></tr>
+            <tr><td><span class="rank">18</span></td><td>2026-02-22</td><td class="num">29</td><td class="num total-col">74,347,461</td></tr>
+            <tr><td><span class="rank">19</span></td><td>2026-01-15</td><td class="num">6</td><td class="num total-col">69,484,285</td></tr>
+            <tr><td><span class="rank">20</span></td><td>2026-01-14</td><td class="num">10</td><td class="num total-col">62,711,579</td></tr>
+            <tr><td><span class="rank">21</span></td><td>2026-02-25</td><td class="num">10</td><td class="num total-col">49,363,272</td></tr>
+            <tr><td><span class="rank">22</span></td><td>2026-02-03</td><td class="num">4</td><td class="num total-col">49,117,644</td></tr>
+            <tr><td><span class="rank">23</span></td><td>2026-01-11</td><td class="num">5</td><td class="num total-col">48,116,170</td></tr>
+            <tr><td><span class="rank">24</span></td><td>2026-01-07</td><td class="num">3</td><td class="num total-col">46,015,340</td></tr>
+            <tr><td><span class="rank">25</span></td><td>2026-01-27</td><td class="num">6</td><td class="num total-col">40,666,032</td></tr>
+            <tr><td><span class="rank">26</span></td><td>2026-01-12</td><td class="num">5</td><td class="num total-col">39,897,937</td></tr>
+            <tr><td><span class="rank">27</span></td><td>2026-01-05</td><td class="num">9</td><td class="num total-col">37,728,896</td></tr>
+            <tr><td><span class="rank">28</span></td><td>2026-02-20</td><td class="num">10</td><td class="num total-col">34,644,040</td></tr>
+            <tr><td><span class="rank">29</span></td><td>2026-02-13</td><td class="num">5</td><td class="num total-col">33,061,035</td></tr>
+            <tr><td><span class="rank">30</span></td><td>2026-01-06</td><td class="num">9</td><td class="num total-col">31,155,432</td></tr>
+            <tr><td><span class="rank">31</span></td><td>2026-01-24</td><td class="num">4</td><td class="num total-col">28,074,968</td></tr>
+            <tr><td><span class="rank">32</span></td><td>2026-02-01</td><td class="num">4</td><td class="num total-col">27,595,488</td></tr>
+            <tr><td><span class="rank">33</span></td><td>2026-02-12</td><td class="num">5</td><td class="num total-col">27,191,523</td></tr>
+            <tr><td><span class="rank">34</span></td><td>2026-01-23</td><td class="num">12</td><td class="num total-col">22,167,233</td></tr>
+            <tr><td><span class="rank">35</span></td><td>2026-01-28</td><td class="num">1</td><td class="num total-col">21,944,579</td></tr>
+            <tr><td><span class="rank">36</span></td><td>2026-01-08</td><td class="num">5</td><td class="num total-col">20,448,014</td></tr>
+            <tr><td><span class="rank">37</span></td><td>2026-01-22</td><td class="num">7</td><td class="num total-col">20,141,611</td></tr>
+            <tr><td><span class="rank">38</span></td><td>2026-01-26</td><td class="num">3</td><td class="num total-col">19,029,620</td></tr>
+            <tr><td><span class="rank">39</span></td><td>2026-01-20</td><td class="num">1</td><td class="num total-col">16,632,340</td></tr>
+            <tr><td><span class="rank">40</span></td><td>2026-01-16</td><td class="num">6</td><td class="num total-col">12,157,266</td></tr>
+            <tr><td><span class="rank">41</span></td><td>2026-01-10</td><td class="num">5</td><td class="num total-col">11,854,559</td></tr>
+            <tr><td><span class="rank">42</span></td><td>2026-01-09</td><td class="num">2</td><td class="num total-col">11,492,470</td></tr>
+            <tr><td><span class="rank">43</span></td><td>2026-01-25</td><td class="num">2</td><td class="num total-col">10,113,216</td></tr>
+            <tr><td><span class="rank">44</span></td><td>2026-01-04</td><td class="num">3</td><td class="num total-col">9,877,965</td></tr>
+            <tr><td><span class="rank">45</span></td><td>2026-01-18</td><td class="num">1</td><td class="num total-col">9,456,967</td></tr>
+            <tr><td><span class="rank">46</span></td><td>2026-01-31</td><td class="num">2</td><td class="num total-col">8,390,788</td></tr>
+            <tr><td><span class="rank">47</span></td><td>2026-02-17</td><td class="num">3</td><td class="num total-col">5,714,039</td></tr>
+            <tr><td><span class="rank">48</span></td><td>2026-02-19</td><td class="num">1</td><td class="num total-col">1,239,111</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p class="foot">Generated from local Codex session history. Values shown are daily total tokens.</p>
+    </section>
+  </main>
+  <script>
+    const autoRecalcChip = document.getElementById("autoRecalcStatus");
+    const lastRefreshChip = document.getElementById("lastRefreshTime");
+    const autoRecalcFlag = "codexDashboardAutoRecalcPending";
+    const lastRefreshStorageKey = "codexDashboardLastRefreshAt";
+    const autoRecalcEndpoint = "/recalc";
+    const setAutoRecalcStatus = (message) => {
+      if (autoRecalcChip) autoRecalcChip.textContent = message;
+    };
+    const formatLastRefresh = (isoString) => {
+      if (!isoString) return "Last refresh: --";
+      const date = new Date(isoString);
+      if (Number.isNaN(date.getTime())) return "Last refresh: --";
+      const stamp = date.toLocaleString([], {
+        year: "numeric",
+        month: "2-digit",
+        day: "2-digit",
+        hour: "2-digit",
+        minute: "2-digit",
+        second: "2-digit",
+        hour12: false,
+      });
+      return `Last refresh: ${stamp}`;
+    };
+    const setLastRefresh = (isoString) => {
+      if (!isoString) return;
+      localStorage.setItem(lastRefreshStorageKey, isoString);
+      if (lastRefreshChip) lastRefreshChip.textContent = formatLastRefresh(isoString);
+    };
+    const renderLastRefresh = () => {
+      if (!lastRefreshChip) return;
+      const saved = localStorage.getItem(lastRefreshStorageKey);
+      lastRefreshChip.textContent = formatLastRefresh(saved);
+    };
+    const formatTimeOnly = (dateObj) => dateObj.toLocaleTimeString([], {
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+      hour12: false,
+    });
+    const msUntilNextFiveMinuteBoundary = () => {
+      const now = new Date();
+      const next = new Date(now);
+      next.setSeconds(0, 0);
+      const nextMinuteBucket = Math.floor(now.getMinutes() / 5) * 5 + 5;
+      if (nextMinuteBucket >= 60) {
+        next.setHours(now.getHours() + 1, 0, 0, 0);
+      } else {
+        next.setMinutes(nextMinuteBucket, 0, 0);
+      }
+      return next.getTime() - now.getTime();
+    };
+    const scheduleBoundaryRefresh = () => {
+      const waitMs = msUntilNextFiveMinuteBoundary();
+      const nextRun = new Date(Date.now() + waitMs);
+      setAutoRecalcStatus(`Auto-recalc: next at ${formatTimeOnly(nextRun)} (5m boundary)`);
+      window.setTimeout(() => {
+        if (document.visibilityState === "hidden") {
+          scheduleBoundaryRefresh();
+          return;
+        }
+        if (sessionStorage.getItem(autoRecalcFlag) === "1") {
+          scheduleBoundaryRefresh();
+          return;
+        }
+        triggerRecalcAndReload("Auto-recalc: scheduled 5-minute refresh...");
+      }, waitMs);
+    };
+
+    const triggerRecalcAndReload = (statusMessage) => {
+      sessionStorage.setItem(autoRecalcFlag, "1");
+      setAutoRecalcStatus(statusMessage);
+      fetch(`${autoRecalcEndpoint}?ts=${Date.now()}`, { method: "GET", cache: "no-store" })
+        .then((response) => {
+          if (!response.ok) {
+            throw new Error(`Recalc failed with status ${response.status}`);
+          }
+          return response.json();
+        })
+        .then((payload) => {
+          const updatedAt = payload && payload.updated_at ? payload.updated_at : "just now";
+          if (payload && payload.updated_at) {
+            setLastRefresh(payload.updated_at);
+          }
+          setAutoRecalcStatus(`Auto-recalc: updated at ${updatedAt}`);
+          window.location.reload();
+        })
+        .catch(() => {
+          sessionStorage.removeItem(autoRecalcFlag);
+          setAutoRecalcStatus("Auto-recalc: local service unavailable");
+        });
+    };
+
+    renderLastRefresh();
+
+    if (sessionStorage.getItem(autoRecalcFlag) === "1") {
+      sessionStorage.removeItem(autoRecalcFlag);
+      setAutoRecalcStatus("Auto-recalc: fresh snapshot loaded");
+    } else {
+      triggerRecalcAndReload("Auto-recalc: updating from local sessions...");
+    }
+
+    scheduleBoundaryRefresh();
+
+    document.querySelectorAll(".stat .value").forEach((el) => {
+      const raw = el.textContent.trim();
+      if (!/^\d[\d,]*$/.test(raw)) return;
+      const n = Number(raw.replace(/,/g, ""));
+      if (Number.isFinite(n)) el.textContent = n.toLocaleString("en-US");
+    });
+
+    const rows = Array.from(document.querySelectorAll("tbody tr"));
+    const sortSelect = document.getElementById("usageChartSort");
+    const rangePresetSelect = document.getElementById("usageRangePreset");
+    const rangeFromInput = document.getElementById("usageRangeFrom");
+    const rangeToInput = document.getElementById("usageRangeTo");
+    const rangeClearBtn = document.getElementById("usageRangeClear");
+    const usageChartBars = document.getElementById("usageChartBars");
+    const usageChartMax = document.getElementById("usageChartMax");
+    const usageChartSessionsMax = document.getElementById("usageChartSessionsMax");
+    const usageChartNote = document.getElementById("usageChartNote");
+    const statCards = Array.from(document.querySelectorAll(".stats .stat"));
+    const statRangeTotal = statCards[0] ?? null;
+    const statRangeDays = statCards[1] ?? null;
+    const statRangeSessions = statCards[2] ?? null;
+    const statRangeHighest = statCards[3] ?? null;
+
+    const formatNumber = (n) => n.toLocaleString("en-US");
+    const addDays = (dateObj, days) => {
+      const next = new Date(dateObj);
+      next.setDate(next.getDate() + days);
+      return next;
+    };
+    const toIsoDate = (dateObj) => {
+      const y = dateObj.getFullYear();
+      const m = String(dateObj.getMonth() + 1).padStart(2, "0");
+      const d = String(dateObj.getDate()).padStart(2, "0");
+      return `${y}-${m}-${d}`;
+    };
+    const parseIsoDate = (isoDate) => {
+      const [year, month, day] = isoDate.split("-").map(Number);
+      return new Date(year, (month || 1) - 1, day || 1);
+    };
+
+    const rowData = rows.map((row) => ({
+      row,
+      date: row.children[1]?.textContent?.trim() ?? "",
+      dateObj: parseIsoDate(row.children[1]?.textContent?.trim() ?? ""),
+      sessions: Number((row.children[2]?.textContent ?? "0").replace(/,/g, "").trim()),
+      total: Number((row.children[3]?.textContent ?? "0").replace(/,/g, "").trim()),
+    })).filter((item) => Number.isFinite(item.total) && !Number.isNaN(item.dateObj.getTime()));
+
+    const minDateObj = rowData.length
+      ? new Date(Math.min(...rowData.map((item) => item.dateObj.getTime())))
+      : new Date();
+    const maxDateObj = rowData.length
+      ? new Date(Math.max(...rowData.map((item) => item.dateObj.getTime())))
+      : new Date();
+    const minDateIso = toIsoDate(minDateObj);
+    const maxDateIso = toIsoDate(maxDateObj);
+
+    if (rangeFromInput) {
+      rangeFromInput.min = minDateIso;
+      rangeFromInput.max = maxDateIso;
+    }
+    if (rangeToInput) {
+      rangeToInput.min = minDateIso;
+      rangeToInput.max = maxDateIso;
+    }
+
+    const readDateValue = (inputEl, fallback) => {
+      if (!inputEl?.value) return fallback;
+      const date = parseIsoDate(inputEl.value);
+      return Number.isNaN(date.getTime()) ? fallback : date;
+    };
+
+    const clampIso = (iso) => {
+      if (iso < minDateIso) return minDateIso;
+      if (iso > maxDateIso) return maxDateIso;
+      return iso;
+    };
+
+    const rangePresetLabel = () => {
+      switch (rangePresetSelect?.value) {
+        case "wtd":
+          return "Week to Date";
+        case "mtd":
+          return "Month to Date";
+        case "ytd":
+          return "Year to Date";
+        case "last30":
+          return "Past 30 Days";
+        case "last7":
+          return "Past 7 Days";
+        case "last90":
+          return "Past 90 Days";
+        case "all":
+          return "All Available";
+        case "custom":
+          return "Custom Range";
+        default:
+          return "Year to Date";
+      }
+    };
+
+    const updateCard = (cardEl, labelText, valueText) => {
+      if (!cardEl) return;
+      const labelEl = cardEl.querySelector(".label");
+      const valueEl = cardEl.querySelector(".value");
+      if (labelEl) labelEl.textContent = labelText;
+      if (valueEl) valueEl.textContent = valueText;
+    };
+
+    const sortRows = (sortKey) => {
+      const sorted = [...rowData];
+      switch (sortKey) {
+        case "sessions-desc":
+          sorted.sort((a, b) => b.sessions - a.sessions || b.total - a.total || b.dateObj - a.dateObj);
+          break;
+        case "date-desc":
+          sorted.sort((a, b) => b.dateObj - a.dateObj || b.total - a.total);
+          break;
+        case "tokens-desc":
+        default:
+          sorted.sort((a, b) => b.total - a.total || b.sessions - a.sessions || b.dateObj - a.dateObj);
+          break;
+      }
+      return sorted;
+    };
+
+    const sortLabel = (sortKey) => {
+      switch (sortKey) {
+        case "sessions-desc":
+          return "sessions";
+        case "date-desc":
+          return "date";
+        case "tokens-desc":
+        default:
+          return "tokens";
+      }
+    };
+
+    const clampRangeInputs = () => {
+      if (!rangeFromInput || !rangeToInput) return;
+      if (!rangeFromInput.value) rangeFromInput.value = minDateIso;
+      if (!rangeToInput.value) rangeToInput.value = maxDateIso;
+      if (rangeFromInput.value > rangeToInput.value) {
+        rangeToInput.value = rangeFromInput.value;
+      }
+    };
+
+    const selectedRangeLabel = () => {
+      if (!rangeFromInput || !rangeToInput) return `${minDateIso} to ${maxDateIso}`;
+      return `${rangeFromInput.value || minDateIso} to ${rangeToInput.value || maxDateIso}`;
+    };
+
+    const computePresetRange = (presetKey) => {
+      const maxIso = maxDateIso;
+      const ytdStartIso = `${maxDateObj.getFullYear()}-01-01`;
+      const monthStartIso = `${maxDateObj.getFullYear()}-${String(maxDateObj.getMonth() + 1).padStart(2, "0")}-01`;
+      const weekStartIso = toIsoDate(addDays(maxDateObj, -((maxDateObj.getDay() + 6) % 7)));
+      switch (presetKey) {
+        case "wtd":
+          return [weekStartIso, maxIso];
+        case "last7":
+          return [toIsoDate(addDays(maxDateObj, -6)), maxIso];
+        case "last30":
+          return [toIsoDate(addDays(maxDateObj, -29)), maxIso];
+        case "last90":
+          return [toIsoDate(addDays(maxDateObj, -89)), maxIso];
+        case "mtd":
+          return [monthStartIso, maxIso];
+        case "all":
+          return [minDateIso, maxIso];
+        case "ytd":
+        default:
+          return [ytdStartIso, maxIso];
+      }
+    };
+
+    const inferPresetFromRange = () => {
+      if (!rangeFromInput || !rangeToInput) return "custom";
+      const currentFrom = rangeFromInput.value || minDateIso;
+      const currentTo = rangeToInput.value || maxDateIso;
+      const presetOrder = ["wtd", "mtd", "ytd", "last7", "last30", "last90", "all"];
+      for (const preset of presetOrder) {
+        const [presetFrom, presetTo] = computePresetRange(preset);
+        if (currentFrom === clampIso(presetFrom) && currentTo === clampIso(presetTo)) {
+          return preset;
+        }
+      }
+      return "custom";
+    };
+
+    const saveRangeState = () => {
+      if (!rangeFromInput || !rangeToInput) return;
+      localStorage.setItem("codexChartRangeFrom", rangeFromInput.value);
+      localStorage.setItem("codexChartRangeTo", rangeToInput.value);
+      if (rangePresetSelect) {
+        localStorage.setItem("codexChartRangePreset", rangePresetSelect.value);
+      }
+    };
+
+    const applyPresetRange = (presetKey, shouldRender = true) => {
+      if (!rangeFromInput || !rangeToInput) return;
+      if (presetKey === "custom") {
+        saveRangeState();
+        if (shouldRender) renderUsageChart();
+        return;
+      }
+      const [presetFrom, presetTo] = computePresetRange(presetKey);
+      rangeFromInput.value = clampIso(presetFrom);
+      rangeToInput.value = clampIso(presetTo);
+      clampRangeInputs();
+      if (rangePresetSelect) rangePresetSelect.value = presetKey;
+      saveRangeState();
+      if (shouldRender) renderUsageChart();
+    };
+
+    const renderUsageChart = () => {
+      if (!usageChartBars || !usageChartMax) return;
+
+      clampRangeInputs();
+      const fromDate = readDateValue(rangeFromInput, minDateObj);
+      const toDate = readDateValue(rangeToInput, maxDateObj);
+      const sortKey = sortSelect?.value || "tokens-desc";
+      const chartRows = sortRows(sortKey).filter((item) => item.dateObj >= fromDate && item.dateObj <= toDate);
+      const rangeSessionsTotal = chartRows.reduce((sum, item) => sum + item.sessions, 0);
+      const rangeTokensTotal = chartRows.reduce((sum, item) => sum + item.total, 0);
+      const rangeHighestTokens = chartRows.length ? Math.max(...chartRows.map((item) => item.total), 0) : 0;
+      const rangeLabel = rangePresetLabel();
+
+      usageChartBars.innerHTML = "";
+
+      if (!chartRows.length) {
+        usageChartMax.textContent = "Tokens max: 0";
+        if (usageChartSessionsMax) usageChartSessionsMax.textContent = "Sessions max: 0";
+        if (usageChartNote) usageChartNote.textContent = `No usage days in ${selectedRangeLabel()}.`;
+        updateCard(statRangeTotal, `${rangeLabel} Total Tokens`, "0");
+        updateCard(statRangeDays, `${rangeLabel} Days With Usage`, "0");
+        updateCard(statRangeSessions, `${rangeLabel} Total Sessions`, "0");
+        updateCard(statRangeHighest, `${rangeLabel} Highest Single Day`, "0");
+        const empty = document.createElement("div");
+        empty.className = "usage-chart-empty";
+        empty.textContent = "No usage rows available.";
+        usageChartBars.appendChild(empty);
+        return;
+      }
+
+      const maxTokens = Math.max(...chartRows.map((item) => item.total), 1);
+      const maxSessions = Math.max(...chartRows.map((item) => item.sessions), 1);
+      usageChartMax.textContent = `Tokens max: ${formatNumber(maxTokens)}`;
+      if (usageChartSessionsMax) usageChartSessionsMax.textContent = `Sessions max: ${formatNumber(maxSessions)}`;
+      updateCard(statRangeTotal, `${rangeLabel} Total Tokens`, formatNumber(rangeTokensTotal));
+      updateCard(statRangeDays, `${rangeLabel} Days With Usage`, formatNumber(chartRows.length));
+      updateCard(statRangeSessions, `${rangeLabel} Total Sessions`, formatNumber(rangeSessionsTotal));
+      updateCard(statRangeHighest, `${rangeLabel} Highest Single Day`, formatNumber(rangeHighestTokens));
+      if (usageChartNote) {
+        const dayWord = chartRows.length === 1 ? "day" : "days";
+        usageChartNote.textContent = `Showing ${chartRows.length} ${dayWord} in ${selectedRangeLabel()}, sorted by ${sortLabel(sortKey)}. Token and session bars use separate scales.`;
+      }
+
+      chartRows.forEach((item, index) => {
+        const rowEl = document.createElement("div");
+        rowEl.className = "usage-chart-row";
+
+        const rankEl = document.createElement("div");
+        rankEl.className = "usage-chart-rank";
+        const chartRank = index + 1;
+        if (chartRank <= 3) rankEl.classList.add("top-3");
+        rankEl.textContent = `#${chartRank}`;
+
+        const dateEl = document.createElement("div");
+        dateEl.className = "usage-chart-date";
+        dateEl.textContent = item.date;
+
+        const trackGroupEl = document.createElement("div");
+        trackGroupEl.className = "usage-chart-track-group";
+
+        const tokenTrackEl = document.createElement("div");
+        tokenTrackEl.className = "usage-chart-track";
+        const tokenFillEl = document.createElement("div");
+        tokenFillEl.className = "usage-chart-fill";
+        tokenFillEl.style.width = `${(item.total / maxTokens) * 100}%`;
+        tokenTrackEl.appendChild(tokenFillEl);
+
+        const sessionsTrackEl = document.createElement("div");
+        sessionsTrackEl.className = "usage-chart-track usage-chart-track--sessions";
+        const sessionsFillEl = document.createElement("div");
+        sessionsFillEl.className = "usage-chart-fill usage-chart-fill--sessions";
+        sessionsFillEl.style.width = `${(item.sessions / maxSessions) * 100}%`;
+        sessionsTrackEl.appendChild(sessionsFillEl);
+
+        trackGroupEl.append(tokenTrackEl, sessionsTrackEl);
+
+        const valueEl = document.createElement("div");
+        valueEl.className = "usage-chart-value";
+        const tokenEl = document.createElement("div");
+        tokenEl.className = "usage-chart-token";
+        tokenEl.textContent = formatNumber(item.total);
+
+        const sessionsEl = document.createElement("div");
+        sessionsEl.className = "usage-chart-sessions";
+        const sessionWord = item.sessions === 1 ? "session" : "sessions";
+        sessionsEl.textContent = `${formatNumber(item.sessions)} ${sessionWord}`;
+
+        valueEl.append(tokenEl, sessionsEl);
+
+        rowEl.append(rankEl, dateEl, trackGroupEl, valueEl);
+        usageChartBars.appendChild(rowEl);
+      });
+    };
+
+    if (sortSelect) {
+      const savedSort = localStorage.getItem("codexChartSort");
+      if (savedSort && sortSelect.querySelector(`option[value="${savedSort}"]`)) {
+        sortSelect.value = savedSort;
+      }
+      sortSelect.addEventListener("change", () => {
+        localStorage.setItem("codexChartSort", sortSelect.value);
+        renderUsageChart();
+      });
+    }
+
+    if (rangeFromInput && rangeToInput) {
+      const savedFrom = localStorage.getItem("codexChartRangeFrom");
+      const savedTo = localStorage.getItem("codexChartRangeTo");
+      rangeFromInput.value = savedFrom && savedFrom >= minDateIso && savedFrom <= maxDateIso ? savedFrom : minDateIso;
+      rangeToInput.value = savedTo && savedTo >= minDateIso && savedTo <= maxDateIso ? savedTo : maxDateIso;
+      clampRangeInputs();
+
+      if (rangePresetSelect) {
+        const savedPreset = localStorage.getItem("codexChartRangePreset");
+        const validPreset = savedPreset && rangePresetSelect.querySelector(`option[value="${savedPreset}"]`)
+          ? savedPreset
+          : null;
+        if (validPreset && validPreset !== "custom") {
+          rangePresetSelect.value = validPreset;
+          applyPresetRange(validPreset, false);
+        } else {
+          rangePresetSelect.value = inferPresetFromRange();
+          saveRangeState();
+        }
+      }
+
+      const handleRangeChange = () => {
+        clampRangeInputs();
+        if (rangePresetSelect) {
+          rangePresetSelect.value = inferPresetFromRange();
+        }
+        saveRangeState();
+        renderUsageChart();
+      };
+
+      rangeFromInput.addEventListener("change", handleRangeChange);
+      rangeToInput.addEventListener("change", handleRangeChange);
+    }
+
+    if (rangeClearBtn) {
+      rangeClearBtn.addEventListener("click", () => {
+        applyPresetRange("all");
+      });
+    }
+
+    if (rangePresetSelect) {
+      rangePresetSelect.addEventListener("change", () => {
+        applyPresetRange(rangePresetSelect.value);
+      });
+    }
+
+    renderUsageChart();
+  </script>
+</body>
+</html>
