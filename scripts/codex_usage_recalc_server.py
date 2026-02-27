@@ -128,11 +128,6 @@ def recalc_dashboard() -> dict:
     prev2_week_sunday = prev_week_monday - dt.timedelta(days=1)
     prev2_week_sessions, prev2_week_total = _sum_range(daily_all, prev2_week_monday, prev2_week_sunday)
 
-    paragraph = (
-        f'Daily totals ranked highest to lowest for <strong>{ytd_from.isoformat()}</strong> '
-        f'through <strong>{today.isoformat()}</strong>.'
-    )
-
     stats_section = f"""    <section class="stats">
       <article class="stat">
         <div class="label">YTD Total Tokens</div>
@@ -178,13 +173,6 @@ def recalc_dashboard() -> dict:
     tbody = "<tbody>\n" + "\n".join(row_lines) + "\n          </tbody>"
 
     html = DASHBOARD_HTML.read_text(encoding="utf-8")
-    html = re.sub(
-        r"<p>Daily totals ranked highest to lowest for <strong>.*?</strong> through <strong>.*?</strong>\.</p>",
-        f"<p>{paragraph}</p>",
-        html,
-        count=1,
-        flags=re.DOTALL,
-    )
     html = re.sub(
         r"<section class=\"stats\">.*?</section>",
         stats_section,
