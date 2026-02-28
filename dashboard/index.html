@@ -20,6 +20,12 @@
       --accent: #2c608c;
       --accent-2: #c08116;
       --success: #1f7a4d;
+      --token-fill-start: #b7841e;
+      --token-fill-end: #dab760;
+      --session-fill-start: #2f8fc8;
+      --session-fill-end: #79c8ef;
+      --token-track-border: color-mix(in srgb, var(--accent-2) 46%, var(--border));
+      --session-track-border: color-mix(in srgb, var(--accent) 46%, var(--border));
       --shadow: 0 16px 40px rgba(37, 27, 14, 0.08);
       --font-size-label-sm: 0.8125rem;
       --font-size-label-md: 0.875rem;
@@ -47,6 +53,10 @@
         --accent: #74b6ea;
         --accent-2: #e7af49;
         --success: #6be1a2;
+        --token-fill-start: #cc9f42;
+        --token-fill-end: #efd186;
+        --session-fill-start: #4fa5e2;
+        --session-fill-end: #8fe0ff;
         --shadow: 0 18px 42px rgba(0, 0, 0, 0.34);
       }
     }
@@ -136,8 +146,8 @@
     }
 
     .stats .stat:nth-child(-n+4) {
-      border-color: color-mix(in srgb, var(--accent) 36%, var(--border));
-      background: linear-gradient(180deg, color-mix(in srgb, var(--accent) 6%, var(--surface-soft)), transparent);
+      border-color: color-mix(in srgb, var(--accent) 24%, var(--border));
+      background: linear-gradient(180deg, color-mix(in srgb, var(--accent) 4%, var(--surface-soft)), transparent);
     }
 
     .stats .stat:nth-child(n+5) {
@@ -155,16 +165,20 @@
     .stat .value {
       font-size: clamp(1.04rem, 1.9vw, 1.4rem);
       font-weight: 600;
-      color: var(--accent);
+      color: color-mix(in srgb, var(--accent) 72%, var(--text));
       font-variant-numeric: tabular-nums;
       line-height: 1.2;
       overflow-wrap: anywhere;
       word-break: break-word;
     }
 
+    .stats .stat:nth-child(-n+4) .value {
+      color: color-mix(in srgb, var(--accent) 76%, var(--text));
+    }
+
     .stats .stat:nth-child(n+5) .value {
       font-size: clamp(0.98rem, 1.72vw, 1.2rem);
-      color: color-mix(in srgb, var(--text) 86%, var(--accent));
+      color: color-mix(in srgb, var(--text) 92%, var(--accent));
     }
 
     .usage-chart {
@@ -192,6 +206,7 @@
     .range-panel .usage-chart-controls {
       justify-content: flex-start;
       width: 100%;
+      gap: 0.7rem;
     }
 
     .usage-chart-controls {
@@ -216,12 +231,48 @@
     .range-panel .usage-chart-control-group {
       flex: 1 1 12rem;
       min-width: min(100%, 12rem);
+      border: 1px solid color-mix(in srgb, var(--accent) 22%, var(--border));
+      border-radius: 12px;
+      padding: 0.42rem 0.55rem;
+      background: linear-gradient(
+        180deg,
+        color-mix(in srgb, var(--surface-soft) 84%, var(--surface)),
+        color-mix(in srgb, var(--surface-soft) 72%, transparent)
+      );
+      box-shadow: inset 0 1px 0 color-mix(in srgb, var(--surface) 32%, transparent);
     }
 
     .range-panel .usage-chart-control-group label {
       min-width: 3.7rem;
       font-size: var(--font-size-label-sm);
       letter-spacing: var(--tracking-label-tight);
+      color: color-mix(in srgb, var(--text) 86%, var(--text-dim));
+      font-weight: 600;
+    }
+
+    .range-panel .usage-chart-control-group:nth-child(3),
+    .range-panel .usage-chart-control-group:nth-child(4) {
+      border-color: color-mix(in srgb, var(--accent-2) 24%, var(--border));
+    }
+
+    .range-panel .usage-chart-control-group--to {
+      flex: 1.45 1 18rem;
+      min-width: min(100%, 18rem);
+    }
+
+    .range-panel .usage-chart-control-group select,
+    .range-panel .usage-chart-control-group input {
+      flex: 1;
+    }
+
+    .range-panel .usage-chart-control-group--to .usage-chart-date-input {
+      min-width: 7.4rem;
+    }
+
+    .range-panel .usage-chart-control-group--to .usage-chart-btn {
+      flex: 0 0 auto;
+      white-space: nowrap;
+      margin-left: 0.1rem;
     }
 
     .usage-chart-sort {
@@ -295,6 +346,39 @@
       gap: 0.3rem 0.75rem;
     }
 
+    .usage-chart-channel-key {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.8rem;
+      flex-wrap: wrap;
+      font-size: var(--font-size-caption);
+      color: var(--text-dim);
+      letter-spacing: 0.02em;
+      margin-left: auto;
+    }
+
+    .usage-chart-channel-item {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.35rem;
+      white-space: nowrap;
+    }
+
+    .usage-chart-swatch {
+      width: 1.2rem;
+      height: 0.55rem;
+      border-radius: 999px;
+      border: 1px solid var(--token-track-border);
+      background: linear-gradient(90deg, var(--token-fill-start), var(--token-fill-end));
+      box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--surface) 36%, transparent);
+    }
+
+    .usage-chart-swatch--sessions {
+      height: 0.4rem;
+      border-color: var(--session-track-border);
+      background: linear-gradient(90deg, var(--session-fill-start), var(--session-fill-end));
+    }
+
     .usage-chart-note {
       font-size: var(--font-size-caption);
       color: var(--text-dim);
@@ -313,11 +397,13 @@
 
     .usage-chart-axis-values {
       display: inline-flex;
-      gap: 0.55rem;
+      gap: 0.75rem;
       align-items: center;
       justify-content: flex-end;
       text-align: right;
       white-space: nowrap;
+      font-size: 0.76rem;
+      color: color-mix(in srgb, var(--text) 70%, var(--text-dim));
     }
 
     .usage-chart-bars {
@@ -364,9 +450,9 @@
 
     .usage-chart-track {
       position: relative;
-      height: 0.74rem;
+      height: 0.7rem;
       border-radius: 999px;
-      border: 1px solid color-mix(in srgb, var(--border) 90%, transparent);
+      border: 1px solid var(--token-track-border);
       background: color-mix(in srgb, var(--surface-soft) 82%, var(--surface));
       overflow: hidden;
     }
@@ -377,29 +463,22 @@
     }
 
     .usage-chart-track--sessions {
-      height: 0.52rem;
-      border-color: color-mix(in srgb, var(--accent) 38%, var(--border));
-      background: color-mix(in srgb, var(--accent) 10%, var(--surface-soft));
+      height: 0.38rem;
+      border-color: var(--session-track-border);
+      border-style: dashed;
+      background: color-mix(in srgb, var(--accent) 14%, var(--surface-soft));
     }
 
     .usage-chart-fill {
       height: 100%;
       border-radius: inherit;
-      background: linear-gradient(
-        90deg,
-        color-mix(in srgb, var(--accent) 72%, var(--accent-2)),
-        color-mix(in srgb, var(--accent-2) 74%, var(--accent))
-      );
+      background: linear-gradient(90deg, var(--token-fill-start), var(--token-fill-end));
       box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--surface) 28%, transparent);
       transition: width 240ms ease;
     }
 
     .usage-chart-fill--sessions {
-      background: linear-gradient(
-        90deg,
-        color-mix(in srgb, var(--success) 78%, var(--accent)),
-        color-mix(in srgb, var(--accent) 68%, var(--success))
-      );
+      background: linear-gradient(90deg, var(--session-fill-start), var(--session-fill-end));
     }
 
     .usage-chart-value {
@@ -410,13 +489,13 @@
     }
 
     .usage-chart-token {
-      color: var(--success);
+      color: var(--token-fill-end);
       font-weight: 600;
       white-space: nowrap;
     }
 
     .usage-chart-sessions {
-      color: var(--text-dim);
+      color: color-mix(in srgb, var(--session-fill-end) 72%, var(--text-dim));
       font-size: 0.67rem;
       white-space: nowrap;
     }
@@ -435,6 +514,25 @@
 
       .usage-chart-bars {
         max-height: var(--chart-max-height-mobile);
+      }
+
+      .usage-chart-channel-key {
+        width: 100%;
+        margin-left: 0;
+        justify-content: flex-start;
+      }
+
+      .usage-chart-axis-values {
+        width: 100%;
+        justify-content: flex-start;
+      }
+
+      .range-panel .usage-chart-control-group--to {
+        flex-wrap: wrap;
+      }
+
+      .range-panel .usage-chart-control-group--to .usage-chart-btn {
+        margin-left: 0;
       }
     }
 
@@ -564,7 +662,7 @@
             <label for="usageRangeFrom">From</label>
             <input id="usageRangeFrom" class="usage-chart-date-input" type="date" aria-label="Usage range from date">
           </div>
-          <div class="usage-chart-control-group">
+          <div class="usage-chart-control-group usage-chart-control-group--to">
             <label for="usageRangeTo">To</label>
             <input id="usageRangeTo" class="usage-chart-date-input" type="date" aria-label="Usage range to date">
             <button id="usageRangeClear" type="button" class="usage-chart-btn" aria-label="Reset usage date range">Reset</button>
@@ -573,10 +671,10 @@
       </div>
     </section>
 
-                                                                                                                                                                <section class="stats">
+                                                                                                                                                                                    <section class="stats">
       <article class="stat">
         <div class="label">YTD Total Tokens</div>
-        <div class="value">3,263,983,210</div>
+        <div class="value">3,293,170,957</div>
       </article>
       <article class="stat">
         <div class="label">Days With Usage</div>
@@ -584,19 +682,19 @@
       </article>
       <article class="stat">
         <div class="label">Total Sessions</div>
-        <div class="value">484</div>
+        <div class="value">490</div>
       </article>
       <article class="stat">
         <div class="label">Highest Single Day</div>
         <div class="value">301,026,803</div>
       </article>
       <article class="stat">
-        <div class="label">Today (2026-02-27, 7 sessions)</div>
-        <div class="value">48,305,983</div>
+        <div class="label">Today (2026-02-27, 13 sessions)</div>
+        <div class="value">75,213,450</div>
       </article>
       <article class="stat">
         <div class="label">Current Week (2026-02-23 to 2026-02-26, 100 sessions)</div>
-        <div class="value">558,745,258</div>
+        <div class="value">561,025,538</div>
       </article>
       <article class="stat">
         <div class="label">Previous Week (2026-02-16 to 2026-02-22, 63 sessions)</div>
@@ -625,6 +723,16 @@
         </div>
         <div class="usage-chart-summary">
           <div id="usageChartNote" class="usage-chart-note">Daily usage distribution.</div>
+          <div class="usage-chart-channel-key" aria-hidden="true">
+            <span class="usage-chart-channel-item">
+              <span class="usage-chart-swatch"></span>
+              Token channel
+            </span>
+            <span class="usage-chart-channel-item">
+              <span class="usage-chart-swatch usage-chart-swatch--sessions"></span>
+              Session channel
+            </span>
+          </div>
           <span class="usage-chart-axis-values">
             <span id="usageChartMax">Tokens max: 0</span>
             <span id="usageChartSessionsMax">Sessions max: 0</span>
@@ -645,7 +753,7 @@
           <tbody>
             <tr><td><span class="rank top-3">1</span></td><td>2026-01-29</td><td class="num">12</td><td class="num total-col">301,026,803</td></tr>
             <tr><td><span class="rank top-3">2</span></td><td>2026-02-24</td><td class="num">30</td><td class="num total-col">208,824,544</td></tr>
-            <tr><td><span class="rank top-3">3</span></td><td>2026-02-26</td><td class="num">42</td><td class="num total-col">183,239,202</td></tr>
+            <tr><td><span class="rank top-3">3</span></td><td>2026-02-26</td><td class="num">42</td><td class="num total-col">185,519,482</td></tr>
             <tr><td><span class="rank">4</span></td><td>2026-02-05</td><td class="num">21</td><td class="num total-col">173,554,472</td></tr>
             <tr><td><span class="rank">5</span></td><td>2026-02-10</td><td class="num">9</td><td class="num total-col">169,877,011</td></tr>
             <tr><td><span class="rank">6</span></td><td>2026-02-08</td><td class="num">2</td><td class="num total-col">169,737,373</td></tr>
@@ -659,13 +767,13 @@
             <tr><td><span class="rank">14</span></td><td>2026-02-02</td><td class="num">8</td><td class="num total-col">84,848,002</td></tr>
             <tr><td><span class="rank">15</span></td><td>2026-02-09</td><td class="num">29</td><td class="num total-col">84,604,534</td></tr>
             <tr><td><span class="rank">16</span></td><td>2026-02-11</td><td class="num">14</td><td class="num total-col">79,870,895</td></tr>
-            <tr><td><span class="rank">17</span></td><td>2026-01-21</td><td class="num">4</td><td class="num total-col">74,886,815</td></tr>
-            <tr><td><span class="rank">18</span></td><td>2026-02-22</td><td class="num">29</td><td class="num total-col">74,347,461</td></tr>
-            <tr><td><span class="rank">19</span></td><td>2026-01-15</td><td class="num">6</td><td class="num total-col">69,484,285</td></tr>
-            <tr><td><span class="rank">20</span></td><td>2026-01-14</td><td class="num">10</td><td class="num total-col">62,711,579</td></tr>
-            <tr><td><span class="rank">21</span></td><td>2026-02-25</td><td class="num">13</td><td class="num total-col">50,456,717</td></tr>
-            <tr><td><span class="rank">22</span></td><td>2026-02-03</td><td class="num">4</td><td class="num total-col">49,117,644</td></tr>
-            <tr><td><span class="rank">23</span></td><td>2026-02-27</td><td class="num">7</td><td class="num total-col">48,305,983</td></tr>
+            <tr><td><span class="rank">17</span></td><td>2026-02-27</td><td class="num">13</td><td class="num total-col">75,213,450</td></tr>
+            <tr><td><span class="rank">18</span></td><td>2026-01-21</td><td class="num">4</td><td class="num total-col">74,886,815</td></tr>
+            <tr><td><span class="rank">19</span></td><td>2026-02-22</td><td class="num">29</td><td class="num total-col">74,347,461</td></tr>
+            <tr><td><span class="rank">20</span></td><td>2026-01-15</td><td class="num">6</td><td class="num total-col">69,484,285</td></tr>
+            <tr><td><span class="rank">21</span></td><td>2026-01-14</td><td class="num">10</td><td class="num total-col">62,711,579</td></tr>
+            <tr><td><span class="rank">22</span></td><td>2026-02-25</td><td class="num">13</td><td class="num total-col">50,456,717</td></tr>
+            <tr><td><span class="rank">23</span></td><td>2026-02-03</td><td class="num">4</td><td class="num total-col">49,117,644</td></tr>
             <tr><td><span class="rank">24</span></td><td>2026-01-11</td><td class="num">11</td><td class="num total-col">48,275,477</td></tr>
             <tr><td><span class="rank">25</span></td><td>2026-01-07</td><td class="num">3</td><td class="num total-col">46,015,340</td></tr>
             <tr><td><span class="rank">26</span></td><td>2026-01-27</td><td class="num">6</td><td class="num total-col">40,666,032</td></tr>
@@ -699,7 +807,7 @@
       <p class="foot">Generated from local AI provider session history (currently Codex and Claude). Values shown are daily total tokens.</p>
     </section>
   </main>
-  <script id="usageDataset" type="application/json">{"generated_at":"2026-02-28T01:18:02.755296+00:00","timezone":"PST","paths":{"codex_sessions_root":"/Users/jwei/.codex/sessions","claude_projects_root":"/Users/jwei/.claude/projects"},"providers_available":{"codex":true,"claude":true,"combined":true},"providers":{"codex":{"rows":[{"date":"2026-02-27","sessions":6,"total_tokens":47241131},{"date":"2026-02-26","sessions":40,"total_tokens":182461124},{"date":"2026-02-25","sessions":10,"total_tokens":49363272},{"date":"2026-02-24","sessions":20,"total_tokens":207044061},{"date":"2026-02-23","sessions":15,"total_tokens":116224795},{"date":"2026-02-22","sessions":29,"total_tokens":74347461},{"date":"2026-02-21","sessions":19,"total_tokens":116100667},{"date":"2026-02-20","sessions":10,"total_tokens":34644040},{"date":"2026-02-19","sessions":1,"total_tokens":1239111},{"date":"2026-02-17","sessions":3,"total_tokens":5714039},{"date":"2026-02-15","sessions":9,"total_tokens":105738821},{"date":"2026-02-14","sessions":24,"total_tokens":95870841},{"date":"2026-02-13","sessions":5,"total_tokens":33061035},{"date":"2026-02-12","sessions":5,"total_tokens":27191523},{"date":"2026-02-11","sessions":14,"total_tokens":79870895},{"date":"2026-02-10","sessions":9,"total_tokens":169877011},{"date":"2026-02-09","sessions":29,"total_tokens":84604534},{"date":"2026-02-08","sessions":2,"total_tokens":169737373},{"date":"2026-02-06","sessions":4,"total_tokens":142116687},{"date":"2026-02-05","sessions":21,"total_tokens":173554472},{"date":"2026-02-04","sessions":9,"total_tokens":98847299},{"date":"2026-02-03","sessions":4,"total_tokens":49117644},{"date":"2026-02-02","sessions":8,"total_tokens":84848002},{"date":"2026-02-01","sessions":4,"total_tokens":27595488},{"date":"2026-01-31","sessions":2,"total_tokens":8390788},{"date":"2026-01-29","sessions":12,"total_tokens":301026803},{"date":"2026-01-28","sessions":1,"total_tokens":21944579},{"date":"2026-01-27","sessions":6,"total_tokens":40666032},{"date":"2026-01-26","sessions":3,"total_tokens":19029620},{"date":"2026-01-25","sessions":2,"total_tokens":10113216},{"date":"2026-01-24","sessions":4,"total_tokens":28074968},{"date":"2026-01-23","sessions":12,"total_tokens":22167233},{"date":"2026-01-22","sessions":7,"total_tokens":20141611},{"date":"2026-01-21","sessions":4,"total_tokens":74886815},{"date":"2026-01-20","sessions":1,"total_tokens":16632340},{"date":"2026-01-18","sessions":1,"total_tokens":9456967},{"date":"2026-01-16","sessions":6,"total_tokens":12157266},{"date":"2026-01-15","sessions":6,"total_tokens":69484285},{"date":"2026-01-14","sessions":10,"total_tokens":62711579},{"date":"2026-01-13","sessions":13,"total_tokens":95496370},{"date":"2026-01-12","sessions":5,"total_tokens":39897937},{"date":"2026-01-11","sessions":5,"total_tokens":48116170},{"date":"2026-01-10","sessions":5,"total_tokens":11854559},{"date":"2026-01-09","sessions":2,"total_tokens":11492470},{"date":"2026-01-08","sessions":5,"total_tokens":20448014},{"date":"2026-01-07","sessions":3,"total_tokens":46015340},{"date":"2026-01-06","sessions":9,"total_tokens":31155432},{"date":"2026-01-05","sessions":9,"total_tokens":37728896},{"date":"2026-01-04","sessions":3,"total_tokens":9877965},{"date":"2025-12-29","sessions":1,"total_tokens":4120760},{"date":"2025-12-28","sessions":2,"total_tokens":26854789},{"date":"2025-12-27","sessions":1,"total_tokens":7473012},{"date":"2025-12-23","sessions":4,"total_tokens":49311905},{"date":"2025-12-22","sessions":3,"total_tokens":5899924},{"date":"2025-12-21","sessions":2,"total_tokens":9400583},{"date":"2025-12-20","sessions":2,"total_tokens":55062358},{"date":"2025-12-19","sessions":5,"total_tokens":4608662},{"date":"2025-12-18","sessions":2,"total_tokens":1514539},{"date":"2025-12-03","sessions":1,"total_tokens":9224440},{"date":"2025-11-25","sessions":1,"total_tokens":33267},{"date":"2025-11-18","sessions":1,"total_tokens":3296270}]},"claude":{"rows":[{"date":"2026-02-27","sessions":1,"total_tokens":1064852},{"date":"2026-02-26","sessions":2,"total_tokens":778078},{"date":"2026-02-25","sessions":3,"total_tokens":1093445},{"date":"2026-02-24","sessions":10,"total_tokens":1780483},{"date":"2026-02-21","sessions":1,"total_tokens":61469},{"date":"2026-02-07","sessions":7,"total_tokens":4554686},{"date":"2026-02-06","sessions":6,"total_tokens":8792240},{"date":"2026-01-13","sessions":1,"total_tokens":25717},{"date":"2026-01-11","sessions":6,"total_tokens":159307},{"date":"2026-01-10","sessions":4,"total_tokens":102892},{"date":"2026-01-09","sessions":5,"total_tokens":130997},{"date":"2026-01-08","sessions":2,"total_tokens":60463}]},"combined":{"rows":[{"date":"2026-02-27","sessions":7,"total_tokens":48305983},{"date":"2026-02-26","sessions":42,"total_tokens":183239202},{"date":"2026-02-25","sessions":13,"total_tokens":50456717},{"date":"2026-02-24","sessions":30,"total_tokens":208824544},{"date":"2026-02-23","sessions":15,"total_tokens":116224795},{"date":"2026-02-22","sessions":29,"total_tokens":74347461},{"date":"2026-02-21","sessions":20,"total_tokens":116162136},{"date":"2026-02-20","sessions":10,"total_tokens":34644040},{"date":"2026-02-19","sessions":1,"total_tokens":1239111},{"date":"2026-02-17","sessions":3,"total_tokens":5714039},{"date":"2026-02-15","sessions":9,"total_tokens":105738821},{"date":"2026-02-14","sessions":24,"total_tokens":95870841},{"date":"2026-02-13","sessions":5,"total_tokens":33061035},{"date":"2026-02-12","sessions":5,"total_tokens":27191523},{"date":"2026-02-11","sessions":14,"total_tokens":79870895},{"date":"2026-02-10","sessions":9,"total_tokens":169877011},{"date":"2026-02-09","sessions":29,"total_tokens":84604534},{"date":"2026-02-08","sessions":2,"total_tokens":169737373},{"date":"2026-02-07","sessions":7,"total_tokens":4554686},{"date":"2026-02-06","sessions":10,"total_tokens":150908927},{"date":"2026-02-05","sessions":21,"total_tokens":173554472},{"date":"2026-02-04","sessions":9,"total_tokens":98847299},{"date":"2026-02-03","sessions":4,"total_tokens":49117644},{"date":"2026-02-02","sessions":8,"total_tokens":84848002},{"date":"2026-02-01","sessions":4,"total_tokens":27595488},{"date":"2026-01-31","sessions":2,"total_tokens":8390788},{"date":"2026-01-29","sessions":12,"total_tokens":301026803},{"date":"2026-01-28","sessions":1,"total_tokens":21944579},{"date":"2026-01-27","sessions":6,"total_tokens":40666032},{"date":"2026-01-26","sessions":3,"total_tokens":19029620},{"date":"2026-01-25","sessions":2,"total_tokens":10113216},{"date":"2026-01-24","sessions":4,"total_tokens":28074968},{"date":"2026-01-23","sessions":12,"total_tokens":22167233},{"date":"2026-01-22","sessions":7,"total_tokens":20141611},{"date":"2026-01-21","sessions":4,"total_tokens":74886815},{"date":"2026-01-20","sessions":1,"total_tokens":16632340},{"date":"2026-01-18","sessions":1,"total_tokens":9456967},{"date":"2026-01-16","sessions":6,"total_tokens":12157266},{"date":"2026-01-15","sessions":6,"total_tokens":69484285},{"date":"2026-01-14","sessions":10,"total_tokens":62711579},{"date":"2026-01-13","sessions":14,"total_tokens":95522087},{"date":"2026-01-12","sessions":5,"total_tokens":39897937},{"date":"2026-01-11","sessions":11,"total_tokens":48275477},{"date":"2026-01-10","sessions":9,"total_tokens":11957451},{"date":"2026-01-09","sessions":7,"total_tokens":11623467},{"date":"2026-01-08","sessions":7,"total_tokens":20508477},{"date":"2026-01-07","sessions":3,"total_tokens":46015340},{"date":"2026-01-06","sessions":9,"total_tokens":31155432},{"date":"2026-01-05","sessions":9,"total_tokens":37728896},{"date":"2026-01-04","sessions":3,"total_tokens":9877965},{"date":"2025-12-29","sessions":1,"total_tokens":4120760},{"date":"2025-12-28","sessions":2,"total_tokens":26854789},{"date":"2025-12-27","sessions":1,"total_tokens":7473012},{"date":"2025-12-23","sessions":4,"total_tokens":49311905},{"date":"2025-12-22","sessions":3,"total_tokens":5899924},{"date":"2025-12-21","sessions":2,"total_tokens":9400583},{"date":"2025-12-20","sessions":2,"total_tokens":55062358},{"date":"2025-12-19","sessions":5,"total_tokens":4608662},{"date":"2025-12-18","sessions":2,"total_tokens":1514539},{"date":"2025-12-03","sessions":1,"total_tokens":9224440},{"date":"2025-11-25","sessions":1,"total_tokens":33267},{"date":"2025-11-18","sessions":1,"total_tokens":3296270}]}}}</script>
+  <script id="usageDataset" type="application/json">{"generated_at":"2026-02-28T05:35:03.354289+00:00","timezone":"PST","paths":{"codex_sessions_root":"/Users/jwei/.codex/sessions","claude_projects_root":"/Users/jwei/.claude/projects"},"providers_available":{"codex":true,"claude":true,"combined":true},"providers":{"codex":{"rows":[{"date":"2026-02-27","sessions":12,"total_tokens":74148598},{"date":"2026-02-26","sessions":40,"total_tokens":184741404},{"date":"2026-02-25","sessions":10,"total_tokens":49363272},{"date":"2026-02-24","sessions":20,"total_tokens":207044061},{"date":"2026-02-23","sessions":15,"total_tokens":116224795},{"date":"2026-02-22","sessions":29,"total_tokens":74347461},{"date":"2026-02-21","sessions":19,"total_tokens":116100667},{"date":"2026-02-20","sessions":10,"total_tokens":34644040},{"date":"2026-02-19","sessions":1,"total_tokens":1239111},{"date":"2026-02-17","sessions":3,"total_tokens":5714039},{"date":"2026-02-15","sessions":9,"total_tokens":105738821},{"date":"2026-02-14","sessions":24,"total_tokens":95870841},{"date":"2026-02-13","sessions":5,"total_tokens":33061035},{"date":"2026-02-12","sessions":5,"total_tokens":27191523},{"date":"2026-02-11","sessions":14,"total_tokens":79870895},{"date":"2026-02-10","sessions":9,"total_tokens":169877011},{"date":"2026-02-09","sessions":29,"total_tokens":84604534},{"date":"2026-02-08","sessions":2,"total_tokens":169737373},{"date":"2026-02-06","sessions":4,"total_tokens":142116687},{"date":"2026-02-05","sessions":21,"total_tokens":173554472},{"date":"2026-02-04","sessions":9,"total_tokens":98847299},{"date":"2026-02-03","sessions":4,"total_tokens":49117644},{"date":"2026-02-02","sessions":8,"total_tokens":84848002},{"date":"2026-02-01","sessions":4,"total_tokens":27595488},{"date":"2026-01-31","sessions":2,"total_tokens":8390788},{"date":"2026-01-29","sessions":12,"total_tokens":301026803},{"date":"2026-01-28","sessions":1,"total_tokens":21944579},{"date":"2026-01-27","sessions":6,"total_tokens":40666032},{"date":"2026-01-26","sessions":3,"total_tokens":19029620},{"date":"2026-01-25","sessions":2,"total_tokens":10113216},{"date":"2026-01-24","sessions":4,"total_tokens":28074968},{"date":"2026-01-23","sessions":12,"total_tokens":22167233},{"date":"2026-01-22","sessions":7,"total_tokens":20141611},{"date":"2026-01-21","sessions":4,"total_tokens":74886815},{"date":"2026-01-20","sessions":1,"total_tokens":16632340},{"date":"2026-01-18","sessions":1,"total_tokens":9456967},{"date":"2026-01-16","sessions":6,"total_tokens":12157266},{"date":"2026-01-15","sessions":6,"total_tokens":69484285},{"date":"2026-01-14","sessions":10,"total_tokens":62711579},{"date":"2026-01-13","sessions":13,"total_tokens":95496370},{"date":"2026-01-12","sessions":5,"total_tokens":39897937},{"date":"2026-01-11","sessions":5,"total_tokens":48116170},{"date":"2026-01-10","sessions":5,"total_tokens":11854559},{"date":"2026-01-09","sessions":2,"total_tokens":11492470},{"date":"2026-01-08","sessions":5,"total_tokens":20448014},{"date":"2026-01-07","sessions":3,"total_tokens":46015340},{"date":"2026-01-06","sessions":9,"total_tokens":31155432},{"date":"2026-01-05","sessions":9,"total_tokens":37728896},{"date":"2026-01-04","sessions":3,"total_tokens":9877965},{"date":"2025-12-29","sessions":1,"total_tokens":4120760},{"date":"2025-12-28","sessions":2,"total_tokens":26854789},{"date":"2025-12-27","sessions":1,"total_tokens":7473012},{"date":"2025-12-23","sessions":4,"total_tokens":49311905},{"date":"2025-12-22","sessions":3,"total_tokens":5899924},{"date":"2025-12-21","sessions":2,"total_tokens":9400583},{"date":"2025-12-20","sessions":2,"total_tokens":55062358},{"date":"2025-12-19","sessions":5,"total_tokens":4608662},{"date":"2025-12-18","sessions":2,"total_tokens":1514539},{"date":"2025-12-03","sessions":1,"total_tokens":9224440},{"date":"2025-11-25","sessions":1,"total_tokens":33267},{"date":"2025-11-18","sessions":1,"total_tokens":3296270}]},"claude":{"rows":[{"date":"2026-02-27","sessions":1,"total_tokens":1064852},{"date":"2026-02-26","sessions":2,"total_tokens":778078},{"date":"2026-02-25","sessions":3,"total_tokens":1093445},{"date":"2026-02-24","sessions":10,"total_tokens":1780483},{"date":"2026-02-21","sessions":1,"total_tokens":61469},{"date":"2026-02-07","sessions":7,"total_tokens":4554686},{"date":"2026-02-06","sessions":6,"total_tokens":8792240},{"date":"2026-01-13","sessions":1,"total_tokens":25717},{"date":"2026-01-11","sessions":6,"total_tokens":159307},{"date":"2026-01-10","sessions":4,"total_tokens":102892},{"date":"2026-01-09","sessions":5,"total_tokens":130997},{"date":"2026-01-08","sessions":2,"total_tokens":60463}]},"combined":{"rows":[{"date":"2026-02-27","sessions":13,"total_tokens":75213450},{"date":"2026-02-26","sessions":42,"total_tokens":185519482},{"date":"2026-02-25","sessions":13,"total_tokens":50456717},{"date":"2026-02-24","sessions":30,"total_tokens":208824544},{"date":"2026-02-23","sessions":15,"total_tokens":116224795},{"date":"2026-02-22","sessions":29,"total_tokens":74347461},{"date":"2026-02-21","sessions":20,"total_tokens":116162136},{"date":"2026-02-20","sessions":10,"total_tokens":34644040},{"date":"2026-02-19","sessions":1,"total_tokens":1239111},{"date":"2026-02-17","sessions":3,"total_tokens":5714039},{"date":"2026-02-15","sessions":9,"total_tokens":105738821},{"date":"2026-02-14","sessions":24,"total_tokens":95870841},{"date":"2026-02-13","sessions":5,"total_tokens":33061035},{"date":"2026-02-12","sessions":5,"total_tokens":27191523},{"date":"2026-02-11","sessions":14,"total_tokens":79870895},{"date":"2026-02-10","sessions":9,"total_tokens":169877011},{"date":"2026-02-09","sessions":29,"total_tokens":84604534},{"date":"2026-02-08","sessions":2,"total_tokens":169737373},{"date":"2026-02-07","sessions":7,"total_tokens":4554686},{"date":"2026-02-06","sessions":10,"total_tokens":150908927},{"date":"2026-02-05","sessions":21,"total_tokens":173554472},{"date":"2026-02-04","sessions":9,"total_tokens":98847299},{"date":"2026-02-03","sessions":4,"total_tokens":49117644},{"date":"2026-02-02","sessions":8,"total_tokens":84848002},{"date":"2026-02-01","sessions":4,"total_tokens":27595488},{"date":"2026-01-31","sessions":2,"total_tokens":8390788},{"date":"2026-01-29","sessions":12,"total_tokens":301026803},{"date":"2026-01-28","sessions":1,"total_tokens":21944579},{"date":"2026-01-27","sessions":6,"total_tokens":40666032},{"date":"2026-01-26","sessions":3,"total_tokens":19029620},{"date":"2026-01-25","sessions":2,"total_tokens":10113216},{"date":"2026-01-24","sessions":4,"total_tokens":28074968},{"date":"2026-01-23","sessions":12,"total_tokens":22167233},{"date":"2026-01-22","sessions":7,"total_tokens":20141611},{"date":"2026-01-21","sessions":4,"total_tokens":74886815},{"date":"2026-01-20","sessions":1,"total_tokens":16632340},{"date":"2026-01-18","sessions":1,"total_tokens":9456967},{"date":"2026-01-16","sessions":6,"total_tokens":12157266},{"date":"2026-01-15","sessions":6,"total_tokens":69484285},{"date":"2026-01-14","sessions":10,"total_tokens":62711579},{"date":"2026-01-13","sessions":14,"total_tokens":95522087},{"date":"2026-01-12","sessions":5,"total_tokens":39897937},{"date":"2026-01-11","sessions":11,"total_tokens":48275477},{"date":"2026-01-10","sessions":9,"total_tokens":11957451},{"date":"2026-01-09","sessions":7,"total_tokens":11623467},{"date":"2026-01-08","sessions":7,"total_tokens":20508477},{"date":"2026-01-07","sessions":3,"total_tokens":46015340},{"date":"2026-01-06","sessions":9,"total_tokens":31155432},{"date":"2026-01-05","sessions":9,"total_tokens":37728896},{"date":"2026-01-04","sessions":3,"total_tokens":9877965},{"date":"2025-12-29","sessions":1,"total_tokens":4120760},{"date":"2025-12-28","sessions":2,"total_tokens":26854789},{"date":"2025-12-27","sessions":1,"total_tokens":7473012},{"date":"2025-12-23","sessions":4,"total_tokens":49311905},{"date":"2025-12-22","sessions":3,"total_tokens":5899924},{"date":"2025-12-21","sessions":2,"total_tokens":9400583},{"date":"2025-12-20","sessions":2,"total_tokens":55062358},{"date":"2025-12-19","sessions":5,"total_tokens":4608662},{"date":"2025-12-18","sessions":2,"total_tokens":1514539},{"date":"2025-12-03","sessions":1,"total_tokens":9224440},{"date":"2025-11-25","sessions":1,"total_tokens":33267},{"date":"2025-11-18","sessions":1,"total_tokens":3296270}]}}}</script>
   <script>
     const autoRecalcChip = document.getElementById("autoRecalcStatus");
     const lastRefreshChip = document.getElementById("lastRefreshTime");
