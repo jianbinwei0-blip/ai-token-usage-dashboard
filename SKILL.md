@@ -1,9 +1,9 @@
 ---
-name: codex-token-usage-dashboard
-description: Build, refresh, and customize a local Codex+Claude token usage dashboard served on 127.0.0.1:8765 from ~/.codex/sessions and ~/.claude/projects data. Use when the user asks for provider-specific token usage updates, chart/stat card changes, date-range/preset behavior, refresh cadence updates, or recalc-service troubleshooting.
+name: ai-token-usage-dashboard
+description: Build, refresh, and customize a local multi-provider AI token usage dashboard served on 127.0.0.1:8765. Current providers are Codex and Claude from ~/.codex/sessions and ~/.claude/projects. Use when the user asks for provider-specific token usage updates, chart/stat card changes, date-range/preset behavior, refresh cadence updates, or recalc-service troubleshooting.
 ---
 
-# Codex Token Usage Dashboard
+# AI Token Usage Dashboard
 
 ## Overview
 
@@ -11,6 +11,7 @@ Use this skill to maintain a local token-usage dashboard that:
 - Reads session data from `~/.codex/sessions` and `~/.claude/projects`
 - Recalculates stats/tables via a local Python service
 - Serves the dashboard at `http://127.0.0.1:8765/`
+- Currently supports Codex and Claude providers
 
 Primary files:
 - `dashboard/index.html`: dashboard UI and client-side behavior

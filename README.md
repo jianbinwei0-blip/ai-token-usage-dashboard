@@ -1,10 +1,11 @@
-# Codex Token Usage Dashboard
+# AI Token Usage Dashboard
 
-A local HTML dashboard for Codex and Claude token usage that auto-recalculates on refresh from local session data.
+A local HTML dashboard for multi-provider AI token usage that auto-recalculates on refresh from local session data.
+Currently supports Codex and Claude.
 
 ## Dashboard Screenshot
 
-![Codex Token Usage Dashboard](docs/images/dashboard-screenshot.png)
+![AI Token Usage Dashboard](docs/images/dashboard-screenshot.png)
 
 ## Features
 
@@ -34,7 +35,7 @@ A local HTML dashboard for Codex and Claude token usage that auto-recalculates o
 1. Start the local recalc service:
 
 ```bash
-cd /path/to/codex-token-usage-dashboard
+cd /path/to/ai-token-usage-dashboard
 chmod +x scripts/run_local.sh
 ./scripts/run_local.sh
 ```
@@ -85,7 +86,7 @@ curl http://127.0.0.1:8765/health
 
 ## Notes
 
-- The dashboard is designed for local use and reads local Codex and Claude session logs.
+- The dashboard is designed for local use and reads local AI provider session logs (currently Codex and Claude).
 - Claude request usage is deduplicated by `(sessionId, requestId)` and keeps the highest observed `output_tokens` for the request.
 - Claude total token metric is computed as `input_tokens + cache_creation_input_tokens + cache_read_input_tokens + output_tokens`.
 - No third-party services are required.
@@ -100,8 +101,8 @@ This repo is skill-ready and includes:
 
 ```bash
 mkdir -p ~/.codex/skills
-ln -sfn /absolute/path/to/codex-token-usage-dashboard \
-  ~/.codex/skills/codex-token-usage-dashboard
+ln -sfn /absolute/path/to/ai-token-usage-dashboard \
+  ~/.codex/skills/ai-token-usage-dashboard
 ```
 
 Restart Codex after installation.
@@ -111,5 +112,5 @@ Restart Codex after installation.
 Ask with the skill name, for example:
 
 ```text
-Use $codex-token-usage-dashboard to recalc and update my usage dashboard.
+Use $ai-token-usage-dashboard to recalc and update my usage dashboard.
 ```

@@ -8,11 +8,11 @@
     <key>ProgramArguments</key>
     <array>
       <string>/bin/bash</string>
-      <string>/ABSOLUTE/PATH/TO/codex-token-usage-dashboard/scripts/run_local.sh</string>
+      <string>/ABSOLUTE/PATH/TO/ai-token-usage-dashboard/scripts/run_local.sh</string>
     </array>
 
     <key>WorkingDirectory</key>
-    <string>/ABSOLUTE/PATH/TO/codex-token-usage-dashboard</string>
+    <string>/ABSOLUTE/PATH/TO/ai-token-usage-dashboard</string>
 
     <key>RunAtLoad</key>
     <true/>

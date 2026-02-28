@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Local HTTP service to recalculate Codex token dashboard data on demand."""
+"""Local HTTP service to recalculate multi-provider AI token dashboard data on demand."""
 
 from __future__ import annotations
 
@@ -433,7 +433,7 @@ def recalc_dashboard() -> dict:
 
 
 class Handler(BaseHTTPRequestHandler):
-    server_version = "CodexUsageRecalc/3.0"
+    server_version = "AIUsageRecalc/3.0"
 
     def _set_headers(self, status_code: int = 200, content_type: str = "application/json") -> None:
         self.send_response(status_code)
@@ -519,7 +519,7 @@ class Handler(BaseHTTPRequestHandler):
 
 def main() -> None:
     httpd = ThreadingHTTPServer((HOST, PORT), Handler)
-    print(f"Codex usage recalc service listening on http://{HOST}:{PORT}")
+    print(f"AI usage recalc service listening on http://{HOST}:{PORT} (currently Codex and Claude)")
     httpd.serve_forever()
 
 
