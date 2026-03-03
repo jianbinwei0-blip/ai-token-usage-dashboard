@@ -243,6 +243,12 @@ def _sum_range(daily: dict[dt.date, DailyTotals], from_date: dt.date, to_date: d
     return (sessions, total_tokens)
 
 
+def _current_week_end(today: dt.date) -> dt.date:
+    current_monday = today - dt.timedelta(days=today.isoweekday() - 1)
+    yesterday = today - dt.timedelta(days=1)
+    return max(current_monday, yesterday)
+
+
 def _slice_daily(daily: dict[dt.date, DailyTotals], from_date: dt.date, to_date: dt.date) -> dict[dt.date, DailyTotals]:
     return {
         usage_date: values
@@ -319,8 +325,8 @@ def recalc_dashboard() -> dict:
     today_sessions, today_total = _sum_range(combined_daily_all, today, today)
 
     current_monday = today - dt.timedelta(days=today.isoweekday() - 1)
-    yesterday = today - dt.timedelta(days=1)
-    current_week_sessions, current_week_total = _sum_range(combined_daily_all, current_monday, yesterday)
+    current_week_end = _current_week_end(today)
+    current_week_sessions, current_week_total = _sum_range(combined_daily_all, current_monday, current_week_end)
 
     prev_week_monday = current_monday - dt.timedelta(days=7)
     prev_week_sunday = current_monday - dt.timedelta(days=1)
@@ -352,7 +358,7 @@ def recalc_dashboard() -> dict:
         <div class=\"value\">{_fmt_num(today_total)}</div>
       </article>
       <article class=\"stat\">
-        <div class=\"label\">Current Week ({current_monday.isoformat()} to {yesterday.isoformat()}, {current_week_sessions} sessions)</div>
+        <div class=\"label\">Current Week ({current_monday.isoformat()} to {current_week_end.isoformat()}, {current_week_sessions} sessions)</div>
         <div class=\"value\">{_fmt_num(current_week_total)}</div>
       </article>
       <article class=\"stat\">

@@ -1,7 +1,7 @@
 import json
 import tempfile
 import unittest
-from datetime import datetime
+from datetime import date, datetime
 from pathlib import Path
 import sys
 
@@ -172,6 +172,13 @@ class UsageAggregationTests(unittest.TestCase):
         missing = Path("/tmp/definitely-not-a-real-claude-path-for-tests")
         totals = server._collect_claude_daily_totals(missing)
         self.assertEqual(totals, {})
+
+    def test_current_week_end_never_precedes_current_monday(self) -> None:
+        monday = date(2026, 3, 2)
+        tuesday = date(2026, 3, 3)
+
+        self.assertEqual(server._current_week_end(monday), monday)
+        self.assertEqual(server._current_week_end(tuesday), monday)
 
 
 if __name__ == "__main__":
