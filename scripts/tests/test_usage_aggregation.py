@@ -6,7 +6,7 @@ from pathlib import Path
 import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-import codex_usage_recalc_server as server
+import ai_usage_recalc_server as server
 
 
 class UsageAggregationTests(unittest.TestCase):

@@ -3,7 +3,7 @@
 <plist version="1.0">
   <dict>
     <key>Label</key>
-    <string>com.user.codex-token-dashboard-recalc</string>
+    <string>com.user.ai-token-usage-dashboard-recalc</string>
 
     <key>ProgramArguments</key>
     <array>
@@ -21,20 +21,20 @@
     <true/>
 
     <key>StandardOutPath</key>
-    <string>/tmp/com.user.codex-token-dashboard-recalc.out.log</string>
+    <string>/tmp/com.user.ai-token-usage-dashboard-recalc.out.log</string>
 
     <key>StandardErrorPath</key>
-    <string>/tmp/com.user.codex-token-dashboard-recalc.err.log</string>
+    <string>/tmp/com.user.ai-token-usage-dashboard-recalc.err.log</string>
 
     <key>EnvironmentVariables</key>
     <dict>
-      <key>CODEX_USAGE_SERVER_HOST</key>
+      <key>AI_USAGE_SERVER_HOST</key>
       <string>127.0.0.1</string>
-      <key>CODEX_USAGE_SERVER_PORT</key>
+      <key>AI_USAGE_SERVER_PORT</key>
       <string>8765</string>
-      <key>CODEX_USAGE_SESSIONS_ROOT</key>
+      <key>AI_USAGE_CODEX_SESSIONS_ROOT</key>
       <string>/ABSOLUTE/PATH/TO/.codex/sessions</string>
-      <key>CODEX_USAGE_CLAUDE_PROJECTS_ROOT</key>
+      <key>AI_USAGE_CLAUDE_PROJECTS_ROOT</key>
       <string>/ABSOLUTE/PATH/TO/.claude/projects</string>
     </dict>
   </dict>

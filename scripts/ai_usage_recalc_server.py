@@ -124,7 +124,7 @@ class Handler(BaseHTTPRequestHandler):
             self._write_json(
                 {
                     "ok": True,
-                    "service": "codex_usage_recalc",
+                    "service": "ai_usage_recalc",
                     "dashboard": str(DASHBOARD_HTML),
                     "sessions_root": str(SESSIONS_ROOT),
                     "claude_projects_root": str(CLAUDE_PROJECTS_ROOT),

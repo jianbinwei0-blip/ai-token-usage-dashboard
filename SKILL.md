@@ -15,7 +15,7 @@ Use this skill to maintain a local token-usage dashboard that:
 
 Primary files:
 - `dashboard/index.html`: dashboard UI and client-side behavior
-- `scripts/codex_usage_recalc_server.py`: `/health` and `/recalc` HTTP entrypoint
+- `scripts/ai_usage_recalc_server.py`: `/health` and `/recalc` HTTP entrypoint
 - `scripts/dashboard_core/pipeline.py`: recalc orchestration logic
 - `scripts/dashboard_core/collectors.py`: provider ingestion
 - `scripts/dashboard_core/aggregation.py`: date windows and summaries
@@ -38,7 +38,7 @@ Primary files:
 1. Confirm service is running (`/health`).
 2. Trigger `/recalc` before reviewing token numbers.
 3. Make UI changes in `dashboard/index.html`.
-4. Make aggregation/range logic changes in `scripts/codex_usage_recalc_server.py` only when server-side totals must change.
+4. Make aggregation/range logic changes in `scripts/ai_usage_recalc_server.py` only when server-side totals must change.
 5. Validate with:
    - `curl -s http://127.0.0.1:8765/recalc` returns JSON containing `"ok": true`
    - Dashboard reflects requested UI/number updates after refresh.
@@ -51,13 +51,13 @@ Primary files:
   - Port: `8765`
   - Codex sessions root: `~/.codex/sessions`
   - Claude projects root: `~/.claude/projects`
-  - Dashboard HTML: `dashboard/index.html`
+  - Dashboard HTML (via `run_local.sh`): `tmp/index.runtime.html` seeded from `dashboard/index.html`
 - Override with env vars:
-  - `CODEX_USAGE_SERVER_HOST`
-  - `CODEX_USAGE_SERVER_PORT`
-  - `CODEX_USAGE_SESSIONS_ROOT`
-  - `CODEX_USAGE_CLAUDE_PROJECTS_ROOT`
-  - `CODEX_USAGE_DASHBOARD_HTML`
+  - `AI_USAGE_SERVER_HOST`
+  - `AI_USAGE_SERVER_PORT`
+  - `AI_USAGE_CODEX_SESSIONS_ROOT`
+  - `AI_USAGE_CLAUDE_PROJECTS_ROOT`
+  - `AI_USAGE_DASHBOARD_HTML`
 
 ## Guardrails
 

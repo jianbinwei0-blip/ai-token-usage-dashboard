@@ -10,7 +10,7 @@ This repo now applies the core lessons from OpenAI's harness-engineering guidanc
 - `scripts/dashboard_core/aggregation.py`: cross-provider math and date/window logic.
 - `scripts/dashboard_core/render.py`: HTML mutation and dataset embedding.
 - `scripts/dashboard_core/pipeline.py`: orchestration of end-to-end recalc flow.
-- `scripts/codex_usage_recalc_server.py`: thin HTTP entrypoint with compatibility wrappers.
+- `scripts/ai_usage_recalc_server.py`: thin HTTP entrypoint with compatibility wrappers.
 
 2. Repository guidance as system of record
 - This file defines the operating model and validation loops.

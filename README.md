@@ -19,7 +19,7 @@ Currently supports Codex and Claude.
 ## Project Structure
 
 - `dashboard/index.html`: Dashboard UI
-- `scripts/codex_usage_recalc_server.py`: Thin local HTTP recalc service (`/health`, `/recalc`)
+- `scripts/ai_usage_recalc_server.py`: Thin local HTTP recalc service (`/health`, `/recalc`)
 - `scripts/dashboard_core/config.py`: Runtime config/env resolution
 - `scripts/dashboard_core/collectors.py`: Codex/Claude usage ingestion
 - `scripts/dashboard_core/aggregation.py`: Daily aggregation + date window logic
@@ -62,19 +62,19 @@ open http://127.0.0.1:8765/
 
 Environment variables:
 
-- `CODEX_USAGE_SERVER_HOST` (default: `127.0.0.1`)
-- `CODEX_USAGE_SERVER_PORT` (default: `8765`)
-- `CODEX_USAGE_SESSIONS_ROOT` (default: `~/.codex/sessions`)
-- `CODEX_USAGE_CLAUDE_PROJECTS_ROOT` (default: `~/.claude/projects`)
-- `CODEX_USAGE_DASHBOARD_HTML` (default via `scripts/run_local.sh`: `<repo>/tmp/index.runtime.html`, seeded from `<repo>/dashboard/index.html`)
+- `AI_USAGE_SERVER_HOST` (default: `127.0.0.1`)
+- `AI_USAGE_SERVER_PORT` (default: `8765`)
+- `AI_USAGE_CODEX_SESSIONS_ROOT` (default: `~/.codex/sessions`)
+- `AI_USAGE_CLAUDE_PROJECTS_ROOT` (default: `~/.claude/projects`)
+- `AI_USAGE_DASHBOARD_HTML` (default via `scripts/run_local.sh`: `<repo>/tmp/index.runtime.html`, seeded from `<repo>/dashboard/index.html`)
 
 ## Optional: Run as LaunchAgent (macOS)
 
 1. Copy and edit the template:
 
 ```bash
-cp launchd/com.user.codex-token-dashboard-recalc.plist.example \
-  ~/Library/LaunchAgents/com.user.codex-token-dashboard-recalc.plist
+cp launchd/com.user.ai-token-usage-dashboard-recalc.plist.example \
+  ~/Library/LaunchAgents/com.user.ai-token-usage-dashboard-recalc.plist
 ```
 
 2. Replace placeholder absolute paths.
@@ -82,8 +82,8 @@ cp launchd/com.user.codex-token-dashboard-recalc.plist.example \
 3. Load it:
 
 ```bash
-launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.user.codex-token-dashboard-recalc.plist
-launchctl kickstart -k gui/$(id -u)/com.user.codex-token-dashboard-recalc
+launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.user.ai-token-usage-dashboard-recalc.plist
+launchctl kickstart -k gui/$(id -u)/com.user.ai-token-usage-dashboard-recalc
 ```
 
 4. Verify:
