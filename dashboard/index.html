@@ -103,6 +103,11 @@
       margin-top: 0.8rem;
       font-size: 0.78rem;
       color: var(--text-dim);
+      display: grid;
+      gap: 0.65rem;
+    }
+
+    .meta-row {
       display: flex;
       flex-wrap: wrap;
       gap: 0.65rem;
@@ -121,6 +126,18 @@
 
     #usageSourceChip {
       max-width: min(100%, 38rem);
+    }
+
+    .meta-row--refresh {
+      width: 100%;
+    }
+
+    .meta-row--refresh .chip {
+      flex: 0 0 auto;
+      max-width: none;
+      white-space: nowrap;
+      overflow: visible;
+      text-overflow: clip;
     }
 
     .stats {
@@ -627,9 +644,13 @@
     <section class="panel hero">
       <h1>AI Token Usage Dashboard</h1>
       <div class="meta">
-        <span id="usageSourceChip" class="chip">Sources: ~/.codex/sessions + ~/.claude/projects</span>
-        <span id="autoRecalcStatus" class="chip">Auto-recalc: waiting for refresh</span>
-        <span id="lastRefreshTime" class="chip">Last refresh: --</span>
+        <div class="meta-row">
+          <span id="usageSourceChip" class="chip">Sources: ~/.codex/sessions + ~/.claude/projects</span>
+        </div>
+        <div class="meta-row meta-row--refresh">
+          <span id="autoRecalcStatus" class="chip">Auto refresh: waiting for refresh</span>
+          <span id="lastRefreshTime" class="chip">Last refresh: --</span>
+        </div>
       </div>
     </section>
 
@@ -1012,7 +1033,7 @@
     const scheduleBoundaryRefresh = () => {
       const waitMs = msUntilNextFiveMinuteBoundary();
       const nextRun = new Date(Date.now() + waitMs);
-      setAutoRecalcStatus(`Auto-recalc: next at ${formatTimeOnly(nextRun)} (5m boundary)`);
+      setAutoRecalcStatus(`Auto refresh: next at ${formatTimeOnly(nextRun)} (5m boundary)`);
       window.setTimeout(() => {
         if (document.visibilityState === "hidden") {
           scheduleBoundaryRefresh();
@@ -1022,7 +1043,7 @@
           scheduleBoundaryRefresh();
           return;
         }
-        triggerRecalcAndReload("Auto-recalc: scheduled 5-minute refresh...");
+        triggerRecalcAndReload("Auto refresh: scheduled 5-minute refresh...");
       }, waitMs);
     };
 
@@ -1041,12 +1062,12 @@
           if (payload && payload.updated_at) {
             setLastRefresh(payload.updated_at);
           }
-          setAutoRecalcStatus(`Auto-recalc: updated at ${updatedAt}`);
+          setAutoRecalcStatus(`Auto refresh: updated at ${updatedAt}`);
           window.location.reload();
         })
         .catch(() => {
           sessionStorage.removeItem(autoRecalcFlag);
-          setAutoRecalcStatus("Auto-recalc: local service unavailable");
+          setAutoRecalcStatus("Auto refresh: local service unavailable");
         });
     };
 
@@ -1431,9 +1452,9 @@
     renderLastRefresh();
     if (sessionStorage.getItem(autoRecalcFlag) === "1") {
       sessionStorage.removeItem(autoRecalcFlag);
-      setAutoRecalcStatus("Auto-recalc: fresh snapshot loaded");
+      setAutoRecalcStatus("Auto refresh: fresh snapshot loaded");
     } else {
-      triggerRecalcAndReload("Auto-recalc: updating from local sessions...");
+      triggerRecalcAndReload("Auto refresh: updating from local sessions...");
     }
     scheduleBoundaryRefresh();
     syncProviderSelectOptions();

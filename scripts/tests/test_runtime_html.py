@@ -1,4 +1,5 @@
 import os
+import re
 import sys
 import tempfile
 import time
@@ -31,6 +32,27 @@ class RuntimeHtmlTests(unittest.TestCase):
             seed_runtime_html(source_html, runtime_html)
 
             self.assertEqual(runtime_html.read_text(encoding="utf-8"), "new-template-currentWeekEnd=today")
+
+    def test_dashboard_groups_refresh_chips_and_uses_untruncated_refresh_copy(self) -> None:
+        dashboard_html = Path(__file__).resolve().parents[2] / "dashboard" / "index.html"
+        html = dashboard_html.read_text(encoding="utf-8")
+
+        refresh_row_match = re.search(
+            r'<div class="meta-row meta-row--refresh">(.*?)</div>',
+            html,
+            flags=re.DOTALL,
+        )
+        self.assertIsNotNone(refresh_row_match)
+        refresh_row = refresh_row_match.group(1)
+        self.assertIn('id="autoRecalcStatus"', refresh_row)
+        self.assertIn('id="lastRefreshTime"', refresh_row)
+        self.assertNotIn("Auto-recalc", html)
+        self.assertNotIn("Auto-refresh", html)
+        self.assertIn("Auto refresh: waiting for refresh", html)
+        self.assertRegex(
+            html,
+            r"\.meta-row--refresh \.chip \{\s*flex: 0 0 auto;\s*max-width: none;\s*white-space: nowrap;\s*overflow: visible;\s*text-overflow: clip;",
+        )
 
 
 if __name__ == "__main__":
