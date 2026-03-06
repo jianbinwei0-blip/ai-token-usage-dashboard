@@ -30,9 +30,7 @@ def sum_range(daily: dict[dt.date, DailyTotals], from_date: dt.date, to_date: dt
 
 
 def current_week_end(today: dt.date) -> dt.date:
-    current_monday = today - dt.timedelta(days=today.isoweekday() - 1)
-    yesterday = today - dt.timedelta(days=1)
-    return max(current_monday, yesterday)
+    return today
 
 
 def slice_daily(daily: dict[dt.date, DailyTotals], from_date: dt.date, to_date: dt.date) -> dict[dt.date, DailyTotals]:

@@ -173,12 +173,12 @@ class UsageAggregationTests(unittest.TestCase):
         totals = server._collect_claude_daily_totals(missing)
         self.assertEqual(totals, {})
 
-    def test_current_week_end_never_precedes_current_monday(self) -> None:
+    def test_current_week_end_includes_today(self) -> None:
         monday = date(2026, 3, 2)
         tuesday = date(2026, 3, 3)
 
         self.assertEqual(server._current_week_end(monday), monday)
-        self.assertEqual(server._current_week_end(tuesday), monday)
+        self.assertEqual(server._current_week_end(tuesday), tuesday)
 
 
 if __name__ == "__main__":

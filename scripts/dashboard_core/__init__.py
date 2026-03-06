@@ -13,6 +13,7 @@ from .collectors import collect_claude_daily_totals, collect_codex_daily_totals
 from .config import DashboardConfig
 from .models import DailyTotals
 from .pipeline import recalc_dashboard
+from .runtime_html import seed_runtime_html
 
 __all__ = [
     "DashboardConfig",
@@ -27,4 +28,5 @@ __all__ = [
     "summary_from_daily",
     "providers_available",
     "recalc_dashboard",
+    "seed_runtime_html",
 ]

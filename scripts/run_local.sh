@@ -8,10 +8,7 @@ RUNTIME_DASHBOARD_HTML="$REPO_ROOT/tmp/index.runtime.html"
 
 if [[ -z "${AI_USAGE_DASHBOARD_HTML:-}" ]]; then
   export AI_USAGE_DASHBOARD_HTML="$RUNTIME_DASHBOARD_HTML"
-  mkdir -p "$(dirname "$AI_USAGE_DASHBOARD_HTML")"
-  if [[ ! -f "$AI_USAGE_DASHBOARD_HTML" || "$SOURCE_DASHBOARD_HTML" -nt "$AI_USAGE_DASHBOARD_HTML" ]]; then
-    cp "$SOURCE_DASHBOARD_HTML" "$AI_USAGE_DASHBOARD_HTML"
-  fi
+  /usr/bin/python3 "$SCRIPT_DIR/seed_runtime_html.py" "$SOURCE_DASHBOARD_HTML" "$AI_USAGE_DASHBOARD_HTML"
 else
   export AI_USAGE_DASHBOARD_HTML
 fi

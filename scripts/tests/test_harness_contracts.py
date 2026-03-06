@@ -153,6 +153,57 @@ class HarnessContractsTests(unittest.TestCase):
             self.assertIn("Current Week (2026-03-02 to 2026-03-02", html)
             self.assertEqual(html.count('id="usageDataset"'), 1)
 
+    def test_recalc_pipeline_includes_today_in_current_week_range(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            dashboard_path = root / "dashboard" / "index.html"
+            dashboard_path.parent.mkdir(parents=True, exist_ok=True)
+            dashboard_path.write_text(HTML_TEMPLATE, encoding="utf-8")
+
+            codex_root = root / "codex"
+            claude_root = root / "claude"
+
+            self._write_jsonl(
+                codex_root / "2026" / "03" / "03" / "session-tuesday.jsonl",
+                [
+                    {
+                        "type": "event_msg",
+                        "payload": {
+                            "type": "token_count",
+                            "info": {"total_token_usage": {"total_tokens": 500}},
+                        },
+                    }
+                ],
+            )
+            self._write_jsonl(
+                codex_root / "2026" / "03" / "04" / "session-wednesday.jsonl",
+                [
+                    {
+                        "type": "event_msg",
+                        "payload": {
+                            "type": "token_count",
+                            "info": {"total_token_usage": {"total_tokens": 250}},
+                        },
+                    }
+                ],
+            )
+
+            config = DashboardConfig(
+                host="127.0.0.1",
+                port=8765,
+                dashboard_html=dashboard_path,
+                sessions_root=codex_root,
+                claude_projects_root=claude_root,
+            )
+            wednesday_now = datetime(2026, 3, 4, 18, 0, tzinfo=timezone.utc)
+
+            recalc_dashboard(config, now=wednesday_now)
+            html = dashboard_path.read_text(encoding="utf-8")
+
+            self.assertIn("Today (2026-03-04, 1 sessions)", html)
+            self.assertIn("Current Week (2026-03-02 to 2026-03-04, 2 sessions)", html)
+            self.assertEqual(html.count('id="usageDataset"'), 1)
+
 
 if __name__ == "__main__":
     unittest.main()

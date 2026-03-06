@@ -1242,9 +1242,8 @@
 
     const updateWeekCards = () => {
       const today = toDateOnly(new Date());
-      const yesterday = addDays(today, -1);
       const currentMonday = addDays(today, -((today.getDay() + 6) % 7));
-      const currentWeekEnd = yesterday < currentMonday ? currentMonday : yesterday;
+      const currentWeekEnd = today;
       const prevMonday = addDays(currentMonday, -7);
       const prevSunday = addDays(currentMonday, -1);
       const prev2Monday = addDays(prevMonday, -7);
