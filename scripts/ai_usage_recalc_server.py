@@ -18,7 +18,7 @@ from dashboard_core.aggregation import (
     summary_from_daily,
     sum_range,
 )
-from dashboard_core.collectors import collect_claude_daily_totals, collect_codex_daily_totals
+from dashboard_core.collectors import collect_claude_daily_totals, collect_codex_daily_totals, collect_pi_daily_totals
 from dashboard_core.config import DashboardConfig
 from dashboard_core.models import DailyTotals
 from dashboard_core.pipeline import recalc_dashboard as recalc_dashboard_pipeline
@@ -30,6 +30,7 @@ PORT = CONFIG.port
 DASHBOARD_HTML = CONFIG.dashboard_html
 SESSIONS_ROOT = CONFIG.sessions_root
 CLAUDE_PROJECTS_ROOT = CONFIG.claude_projects_root
+PI_AGENT_ROOT = CONFIG.pi_agent_root
 
 
 # Compatibility helpers used by local tests and existing workflows.
@@ -43,6 +44,10 @@ def _collect_codex_daily_totals(sessions_root: Path | None = None) -> dict[dt.da
 
 def _collect_claude_daily_totals(claude_projects_root: Path | None = None) -> dict[dt.date, DailyTotals]:
     return collect_claude_daily_totals(claude_projects_root or CLAUDE_PROJECTS_ROOT)
+
+
+def _collect_pi_daily_totals(pi_agent_root: Path | None = None) -> dict[dt.date, DailyTotals]:
+    return collect_pi_daily_totals(pi_agent_root or PI_AGENT_ROOT)
 
 
 def _combine_daily_totals(*providers: dict[dt.date, DailyTotals]) -> dict[dt.date, DailyTotals]:
@@ -69,8 +74,8 @@ def _summary_from_daily(daily: dict[dt.date, DailyTotals]) -> dict[str, int]:
     return summary_from_daily(daily)
 
 
-def _providers_available(codex_rows: list[dict[str, int | str]], claude_rows: list[dict[str, int | str]]) -> dict[str, bool]:
-    return providers_available(codex_rows, claude_rows)
+def _providers_available(codex_source: object, claude_source: object, pi_source: object = False) -> dict[str, bool]:
+    return providers_available(codex_source, claude_source, pi_source)
 
 
 def recalc_dashboard() -> dict:
@@ -128,11 +133,12 @@ class Handler(BaseHTTPRequestHandler):
                     "dashboard": str(DASHBOARD_HTML),
                     "sessions_root": str(SESSIONS_ROOT),
                     "claude_projects_root": str(CLAUDE_PROJECTS_ROOT),
-                    "providers_available": {
-                        "codex": SESSIONS_ROOT.exists(),
-                        "claude": CLAUDE_PROJECTS_ROOT.exists(),
-                        "combined": SESSIONS_ROOT.exists() or CLAUDE_PROJECTS_ROOT.exists(),
-                    },
+                    "pi_agent_root": str(PI_AGENT_ROOT),
+                    "providers_available": providers_available(
+                        SESSIONS_ROOT.exists(),
+                        CLAUDE_PROJECTS_ROOT.exists(),
+                        PI_AGENT_ROOT.exists(),
+                    ),
                     "timestamp": dt.datetime.now(dt.timezone.utc).isoformat(),
                 }
             )
@@ -164,7 +170,7 @@ class Handler(BaseHTTPRequestHandler):
 
 def main() -> None:
     httpd = ThreadingHTTPServer((HOST, PORT), Handler)
-    print(f"AI usage recalc service listening on http://{HOST}:{PORT} (currently Codex and Claude)")
+    print(f"AI usage recalc service listening on http://{HOST}:{PORT} (supports Codex, Claude, and PI)")
     httpd.serve_forever()
 
 

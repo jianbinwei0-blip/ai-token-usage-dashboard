@@ -94,6 +94,46 @@ def inject_usage_dataset(html: str, dataset: dict) -> str:
     return html + "\n" + script
 
 
+def build_provider_options(dataset: dict) -> str:
+    provider_flags = dataset.get("providers_available")
+    if not isinstance(provider_flags, dict):
+        provider_flags = {}
+
+    provider_labels = {
+        "codex": "Codex",
+        "claude": "Claude",
+        "pi": "PI",
+    }
+    present_providers = [key for key in ("codex", "claude", "pi") if provider_flags.get(key)]
+
+    option_lines = []
+    if len(present_providers) > 1:
+        option_lines.append('              <option value="combined">Combined</option>')
+    for provider in present_providers:
+        option_lines.append(f'              <option value="{provider}">{provider_labels[provider]}</option>')
+
+    if not option_lines:
+        option_lines.append('              <option value="combined">Combined</option>')
+
+    return "\n".join(option_lines)
+
+
+def rewrite_provider_select(html: str, dataset: dict) -> str:
+    pattern = r"(<select id=\"usageProvider\"[^>]*>)(.*?)(</select>)"
+    options = build_provider_options(dataset)
+
+    if not re.search(pattern, html, flags=re.DOTALL):
+        return html
+
+    return re.sub(
+        pattern,
+        lambda match: f"{match.group(1)}\n{options}\n            {match.group(3)}",
+        html,
+        count=1,
+        flags=re.DOTALL,
+    )
+
+
 def rewrite_dashboard_html(html: str, stats_section: str, table_body: str, dataset: dict) -> str:
     updated = re.sub(
         r"^[ \t]*<section class=\"stats\">.*?</section>",
@@ -109,4 +149,5 @@ def rewrite_dashboard_html(html: str, stats_section: str, table_body: str, datas
         count=1,
         flags=re.DOTALL | re.MULTILINE,
     )
+    updated = rewrite_provider_select(updated, dataset)
     return inject_usage_dataset(updated, dataset)

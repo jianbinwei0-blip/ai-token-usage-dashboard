@@ -1,7 +1,7 @@
 # AI Token Usage Dashboard
 
 A local HTML dashboard for multi-provider AI token usage that auto-recalculates on refresh from local session data.
-Currently supports Codex and Claude.
+Supports Codex, Claude, and PI Coding Agent.
 
 ## Dashboard Screenshot
 
@@ -9,7 +9,7 @@ Currently supports Codex and Claude.
 
 ## Features
 
-- Provider toggle (`Combined`, `Codex`, `Claude`)
+- Provider toggle filtered to providers present on the system (`Combined`, `Codex`, `Claude`, `PI`)
 - YTD stats cards (`YTD total`, `days`, `sessions`, `highest day`)
 - Today + calendar-week rollups
 - Daily breakdown table sorted by highest total tokens
@@ -21,7 +21,7 @@ Currently supports Codex and Claude.
 - `dashboard/index.html`: Dashboard UI
 - `scripts/ai_usage_recalc_server.py`: Thin local HTTP recalc service (`/health`, `/recalc`)
 - `scripts/dashboard_core/config.py`: Runtime config/env resolution
-- `scripts/dashboard_core/collectors.py`: Codex/Claude usage ingestion
+- `scripts/dashboard_core/collectors.py`: Codex/Claude/PI usage ingestion
 - `scripts/dashboard_core/aggregation.py`: Daily aggregation + date window logic
 - `scripts/dashboard_core/render.py`: HTML rewrite + dataset injection
 - `scripts/dashboard_core/pipeline.py`: End-to-end recalc orchestration
@@ -36,6 +36,7 @@ Currently supports Codex and Claude.
 - Python 3.9+
 - Local Codex session logs in `~/.codex/sessions`
 - Local Claude project logs in `~/.claude/projects` (optional; dashboard still works without Claude data)
+- Local PI agent state in `~/.pi/agent` (optional; dashboard still works without PI data)
 
 ## Quick Start
 
@@ -66,6 +67,7 @@ Environment variables:
 - `AI_USAGE_SERVER_PORT` (default: `8765`)
 - `AI_USAGE_CODEX_SESSIONS_ROOT` (default: `~/.codex/sessions`)
 - `AI_USAGE_CLAUDE_PROJECTS_ROOT` (default: `~/.claude/projects`)
+- `AI_USAGE_PI_AGENT_ROOT` (default: `~/.pi/agent`)
 - `AI_USAGE_DASHBOARD_HTML` (default via `scripts/run_local.sh`: `<repo>/tmp/index.runtime.html`, seeded from `<repo>/dashboard/index.html`)
 
 ## Optional: Run as LaunchAgent (macOS)
@@ -94,9 +96,10 @@ curl http://127.0.0.1:8765/health
 
 ## Notes
 
-- The dashboard is designed for local use and reads local AI provider session logs (currently Codex and Claude).
+- The dashboard is designed for local use and reads local AI provider session logs from Codex, Claude, and PI when present.
 - Claude request usage is deduplicated by `(sessionId, requestId)` and keeps the highest observed `output_tokens` for the request.
 - Claude total token metric is computed as `input_tokens + cache_creation_input_tokens + cache_read_input_tokens + output_tokens`.
+- PI usage is read from `~/.pi/agent/sessions/**/*.jsonl` and sums assistant `usage.totalTokens` while counting unique session IDs per day.
 - No third-party services are required.
 
 ## Validation
@@ -104,7 +107,7 @@ curl http://127.0.0.1:8765/health
 Run the full local harness checks:
 
 ```bash
-python3 -m unittest scripts.tests.test_usage_aggregation scripts.tests.test_harness_contracts
+python3 -m unittest discover -s scripts/tests
 ```
 
 ## Use as a Codex Skill

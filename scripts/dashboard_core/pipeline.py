@@ -11,7 +11,7 @@ from .aggregation import (
     summary_from_daily,
     sum_range,
 )
-from .collectors import collect_claude_daily_totals, collect_codex_daily_totals
+from .collectors import collect_claude_daily_totals, collect_codex_daily_totals, collect_pi_daily_totals
 from .config import DashboardConfig
 from .render import build_stats_section, build_table_body, rewrite_dashboard_html
 
@@ -24,10 +24,12 @@ def recalc_dashboard(config: DashboardConfig, now: dt.datetime | None = None) ->
 
     codex_daily_all = collect_codex_daily_totals(config.sessions_root)
     claude_daily_all = collect_claude_daily_totals(config.claude_projects_root)
-    combined_daily_all = combine_daily_totals(codex_daily_all, claude_daily_all)
+    pi_daily_all = collect_pi_daily_totals(config.pi_agent_root)
+    combined_daily_all = combine_daily_totals(codex_daily_all, claude_daily_all, pi_daily_all)
 
     codex_daily_ytd = slice_daily(codex_daily_all, ytd_from, today)
     claude_daily_ytd = slice_daily(claude_daily_all, ytd_from, today)
+    pi_daily_ytd = slice_daily(pi_daily_all, ytd_from, today)
     combined_daily_ytd = slice_daily(combined_daily_all, ytd_from, today)
 
     rows = sorted(combined_daily_ytd.values(), key=lambda item: (-item.total_tokens, item.date.isoformat()))
@@ -76,8 +78,13 @@ def recalc_dashboard(config: DashboardConfig, now: dt.datetime | None = None) ->
 
     codex_rows_all = rows_from_daily(codex_daily_all)
     claude_rows_all = rows_from_daily(claude_daily_all)
+    pi_rows_all = rows_from_daily(pi_daily_all)
     combined_rows_all = rows_from_daily(combined_daily_all)
-    provider_flags = providers_available(codex_rows_all, claude_rows_all)
+    provider_flags = providers_available(
+        config.sessions_root.exists(),
+        config.claude_projects_root.exists(),
+        config.pi_agent_root.exists(),
+    )
 
     dataset_payload = {
         "generated_at": now_utc.isoformat(),
@@ -85,11 +92,14 @@ def recalc_dashboard(config: DashboardConfig, now: dt.datetime | None = None) ->
         "paths": {
             "codex_sessions_root": str(config.sessions_root),
             "claude_projects_root": str(config.claude_projects_root),
+            "pi_agent_root": str(config.pi_agent_root),
+            "pi_sessions_root": str(config.pi_agent_root / "sessions"),
         },
         "providers_available": provider_flags,
         "providers": {
             "codex": {"rows": codex_rows_all},
             "claude": {"rows": claude_rows_all},
+            "pi": {"rows": pi_rows_all},
             "combined": {"rows": combined_rows_all},
         },
     }
@@ -108,11 +118,13 @@ def recalc_dashboard(config: DashboardConfig, now: dt.datetime | None = None) ->
         "sources": {
             "codex_sessions_root": str(config.sessions_root),
             "claude_projects_root": str(config.claude_projects_root),
+            "pi_agent_root": str(config.pi_agent_root),
         },
         "providers_available": provider_flags,
         "providers": {
             "codex": summary_from_daily(codex_daily_ytd),
             "claude": summary_from_daily(claude_daily_ytd),
+            "pi": summary_from_daily(pi_daily_ytd),
             "combined": summary_from_daily(combined_daily_ytd),
         },
     }

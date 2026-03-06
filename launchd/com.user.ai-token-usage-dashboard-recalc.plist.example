@@ -36,6 +36,8 @@
       <string>/ABSOLUTE/PATH/TO/.codex/sessions</string>
       <key>AI_USAGE_CLAUDE_PROJECTS_ROOT</key>
       <string>/ABSOLUTE/PATH/TO/.claude/projects</string>
+      <key>AI_USAGE_PI_AGENT_ROOT</key>
+      <string>/ABSOLUTE/PATH/TO/.pi/agent</string>
     </dict>
   </dict>
 </plist>

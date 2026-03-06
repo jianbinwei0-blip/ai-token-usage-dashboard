@@ -149,6 +149,97 @@ class UsageAggregationTests(unittest.TestCase):
             self.assertEqual(totals[expected_day].total_tokens, 5)
             self.assertEqual(totals[expected_day].sessions, 1)
 
+    def test_collect_pi_daily_totals_sums_assistant_usage_and_counts_unique_sessions(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+
+            first_session = root / "sessions" / "--Users-jwei--" / "2026-03-05T03-26-26-798Z_session-a.jsonl"
+            self._write_jsonl(
+                first_session,
+                [
+                    {
+                        "type": "session",
+                        "id": "pi-session-a",
+                        "timestamp": "2026-03-05T03:26:26.798Z",
+                        "cwd": "/Users/jwei",
+                    },
+                    {
+                        "type": "message",
+                        "id": "assistant-a1",
+                        "timestamp": "2026-03-05T03:27:00.000Z",
+                        "message": {
+                            "role": "assistant",
+                            "usage": {
+                                "input": 90,
+                                "output": 10,
+                                "cacheRead": 0,
+                                "cacheWrite": 0,
+                                "totalTokens": 100,
+                            },
+                        },
+                    },
+                    {
+                        "type": "message",
+                        "id": "assistant-a2",
+                        "timestamp": "2026-03-05T03:28:00.000Z",
+                        "message": {
+                            "role": "assistant",
+                            "usage": {
+                                "input": 180,
+                                "output": 20,
+                                "cacheRead": 0,
+                                "cacheWrite": 0,
+                                "totalTokens": 200,
+                            },
+                        },
+                    },
+                    {
+                        "type": "message",
+                        "id": "tool-result-a",
+                        "timestamp": "2026-03-05T03:28:01.000Z",
+                        "message": {
+                            "role": "toolResult",
+                            "content": [{"type": "text", "text": "ignored"}],
+                        },
+                    },
+                ],
+            )
+
+            second_session = root / "sessions" / "--Users-jwei--" / "2026-03-05T04-10-00-000Z_session-b.jsonl"
+            self._write_jsonl(
+                second_session,
+                [
+                    {
+                        "type": "session",
+                        "id": "pi-session-b",
+                        "timestamp": "2026-03-05T04:10:00.000Z",
+                        "cwd": "/Users/jwei",
+                    },
+                    {
+                        "type": "message",
+                        "id": "assistant-b1",
+                        "timestamp": "2026-03-05T04:11:00.000Z",
+                        "message": {
+                            "role": "assistant",
+                            "usage": {
+                                "input": 45,
+                                "output": 5,
+                                "cacheRead": 0,
+                                "cacheWrite": 0,
+                                "totalTokens": 50,
+                            },
+                        },
+                    },
+                ],
+            )
+
+            totals = server._collect_pi_daily_totals(root)
+            expected_day = datetime.fromisoformat("2026-03-05T03:27:00+00:00").astimezone().date()
+
+            self.assertIn(expected_day, totals)
+            self.assertEqual(totals[expected_day].total_tokens, 350)
+            self.assertEqual(totals[expected_day].sessions, 2)
+
     def test_combine_daily_totals_merges_overlapping_dates(self) -> None:
         day_a = datetime(2026, 2, 27).date()
         day_b = datetime(2026, 2, 26).date()

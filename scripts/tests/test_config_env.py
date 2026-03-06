@@ -20,6 +20,7 @@ class DashboardConfigEnvTests(unittest.TestCase):
                 "AI_USAGE_DASHBOARD_HTML": "/tmp/ai-dashboard/index.html",
                 "AI_USAGE_CODEX_SESSIONS_ROOT": "/tmp/ai-dashboard/codex",
                 "AI_USAGE_CLAUDE_PROJECTS_ROOT": "/tmp/ai-dashboard/claude",
+                "AI_USAGE_PI_AGENT_ROOT": "/tmp/ai-dashboard/pi-agent",
             },
             clear=True,
         ):
@@ -30,6 +31,7 @@ class DashboardConfigEnvTests(unittest.TestCase):
         self.assertEqual(cfg.dashboard_html, Path("/tmp/ai-dashboard/index.html"))
         self.assertEqual(cfg.sessions_root, Path("/tmp/ai-dashboard/codex"))
         self.assertEqual(cfg.claude_projects_root, Path("/tmp/ai-dashboard/claude"))
+        self.assertEqual(cfg.pi_agent_root, Path("/tmp/ai-dashboard/pi-agent"))
 
     def test_uses_defaults_when_env_is_unset(self) -> None:
         repo_root = Path("/tmp/repo")
@@ -41,6 +43,7 @@ class DashboardConfigEnvTests(unittest.TestCase):
         self.assertEqual(cfg.dashboard_html, repo_root / "dashboard" / "index.html")
         self.assertEqual(cfg.sessions_root, Path.home() / ".codex" / "sessions")
         self.assertEqual(cfg.claude_projects_root, Path.home() / ".claude" / "projects")
+        self.assertEqual(cfg.pi_agent_root, Path.home() / ".pi" / "agent")
 
 
 if __name__ == "__main__":

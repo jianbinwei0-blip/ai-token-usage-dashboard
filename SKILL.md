@@ -1,6 +1,6 @@
 ---
 name: ai-token-usage-dashboard
-description: Build, refresh, and customize a local multi-provider AI token usage dashboard served on 127.0.0.1:8765. Current providers are Codex and Claude from ~/.codex/sessions and ~/.claude/projects. Use when the user asks for provider-specific token usage updates, chart/stat card changes, date-range/preset behavior, refresh cadence updates, or recalc-service troubleshooting.
+description: Build, refresh, and customize a local multi-provider AI token usage dashboard served on 127.0.0.1:8765. Current providers are Codex, Claude, and PI from ~/.codex/sessions, ~/.claude/projects, and ~/.pi/agent. Use when the user asks for provider-specific token usage updates, chart/stat card changes, date-range/preset behavior, refresh cadence updates, or recalc-service troubleshooting.
 ---
 
 # AI Token Usage Dashboard
@@ -8,10 +8,10 @@ description: Build, refresh, and customize a local multi-provider AI token usage
 ## Overview
 
 Use this skill to maintain a local token-usage dashboard that:
-- Reads session data from `~/.codex/sessions` and `~/.claude/projects`
+- Reads session data from `~/.codex/sessions`, `~/.claude/projects`, and `~/.pi/agent/sessions`
 - Recalculates stats/tables via a local Python service
 - Serves the dashboard at `http://127.0.0.1:8765/`
-- Currently supports Codex and Claude providers
+- Currently supports Codex, Claude, and PI providers
 
 Primary files:
 - `dashboard/index.html`: dashboard UI and client-side behavior
@@ -51,12 +51,14 @@ Primary files:
   - Port: `8765`
   - Codex sessions root: `~/.codex/sessions`
   - Claude projects root: `~/.claude/projects`
+  - PI agent root: `~/.pi/agent`
   - Dashboard HTML (via `run_local.sh`): `tmp/index.runtime.html` seeded from `dashboard/index.html`
 - Override with env vars:
   - `AI_USAGE_SERVER_HOST`
   - `AI_USAGE_SERVER_PORT`
   - `AI_USAGE_CODEX_SESSIONS_ROOT`
   - `AI_USAGE_CLAUDE_PROJECTS_ROOT`
+  - `AI_USAGE_PI_AGENT_ROOT`
   - `AI_USAGE_DASHBOARD_HTML`
 
 ## Guardrails

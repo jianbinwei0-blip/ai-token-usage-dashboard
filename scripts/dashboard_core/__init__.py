@@ -9,7 +9,7 @@ from .aggregation import (
     summary_from_daily,
     sum_range,
 )
-from .collectors import collect_claude_daily_totals, collect_codex_daily_totals
+from .collectors import collect_claude_daily_totals, collect_codex_daily_totals, collect_pi_daily_totals
 from .config import DashboardConfig
 from .models import DailyTotals
 from .pipeline import recalc_dashboard
@@ -20,6 +20,7 @@ __all__ = [
     "DailyTotals",
     "collect_codex_daily_totals",
     "collect_claude_daily_totals",
+    "collect_pi_daily_totals",
     "combine_daily_totals",
     "sum_range",
     "current_week_end",

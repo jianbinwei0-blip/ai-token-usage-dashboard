@@ -17,6 +17,16 @@ HTML_TEMPLATE = """<!DOCTYPE html>
 <head><meta charset=\"UTF-8\" /><title>Fixture</title></head>
 <body>
   <main>
+    <section class="panel range-panel">
+      <div class="usage-chart-control-group">
+        <label for="usageProvider">Provider</label>
+        <select id="usageProvider" class="usage-chart-sort" aria-label="Usage provider">
+          <option value="combined">Combined</option>
+          <option value="codex">Codex</option>
+          <option value="claude">Claude</option>
+        </select>
+      </div>
+    </section>
     <section class=\"stats\">
       <article class=\"stat\"><div class=\"label\">placeholder</div><div class=\"value\">0</div></article>
     </section>
@@ -98,6 +108,7 @@ class HarnessContractsTests(unittest.TestCase):
                 dashboard_html=dashboard_path,
                 sessions_root=codex_root,
                 claude_projects_root=claude_root,
+                pi_agent_root=root / "pi-agent",
             )
             fixed_now = datetime(2026, 3, 4, 15, 0, tzinfo=timezone.utc)
 
@@ -113,7 +124,10 @@ class HarnessContractsTests(unittest.TestCase):
 
             dataset = self._read_dataset_from_html(html_first)
             self.assertEqual(dataset["generated_at"], fixed_now.isoformat())
-            self.assertEqual(dataset["providers_available"], {"codex": True, "claude": True, "combined": True})
+            self.assertEqual(
+                dataset["providers_available"],
+                {"codex": True, "claude": True, "pi": False, "combined": True},
+            )
 
     def test_recalc_pipeline_clamps_current_week_end_on_monday(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -144,6 +158,7 @@ class HarnessContractsTests(unittest.TestCase):
                 dashboard_html=dashboard_path,
                 sessions_root=codex_root,
                 claude_projects_root=claude_root,
+                pi_agent_root=root / "pi-agent",
             )
             monday_now = datetime(2026, 3, 2, 18, 0, tzinfo=timezone.utc)
 
@@ -194,6 +209,7 @@ class HarnessContractsTests(unittest.TestCase):
                 dashboard_html=dashboard_path,
                 sessions_root=codex_root,
                 claude_projects_root=claude_root,
+                pi_agent_root=root / "pi-agent",
             )
             wednesday_now = datetime(2026, 3, 4, 18, 0, tzinfo=timezone.utc)
 
@@ -203,6 +219,81 @@ class HarnessContractsTests(unittest.TestCase):
             self.assertIn("Today (2026-03-04, 1 sessions)", html)
             self.assertIn("Current Week (2026-03-02 to 2026-03-04, 2 sessions)", html)
             self.assertEqual(html.count('id="usageDataset"'), 1)
+
+    def test_recalc_pipeline_adds_pi_provider_and_filters_provider_selector(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            dashboard_path = root / "dashboard" / "index.html"
+            dashboard_path.parent.mkdir(parents=True, exist_ok=True)
+            dashboard_path.write_text(HTML_TEMPLATE, encoding="utf-8")
+
+            codex_root = root / "codex"
+            claude_root = root / "claude"
+            pi_agent_root = root / "pi-agent"
+
+            self._write_jsonl(
+                codex_root / "2026" / "03" / "03" / "session-a.jsonl",
+                [
+                    {
+                        "type": "event_msg",
+                        "payload": {
+                            "type": "token_count",
+                            "info": {"total_token_usage": {"total_tokens": 120}},
+                        },
+                    }
+                ],
+            )
+
+            self._write_jsonl(
+                pi_agent_root / "sessions" / "--Users-jwei--" / "2026-03-03T21-46-05-286Z_session-a.jsonl",
+                [
+                    {
+                        "type": "session",
+                        "id": "pi-session-a",
+                        "timestamp": "2026-03-03T21:46:05.286Z",
+                        "cwd": "/Users/jwei",
+                    },
+                    {
+                        "type": "message",
+                        "id": "assistant-a1",
+                        "timestamp": "2026-03-03T21:46:54.632Z",
+                        "message": {
+                            "role": "assistant",
+                            "usage": {
+                                "input": 30,
+                                "output": 3,
+                                "cacheRead": 0,
+                                "cacheWrite": 0,
+                                "totalTokens": 33,
+                            },
+                        },
+                    },
+                ],
+            )
+
+            config = DashboardConfig(
+                host="127.0.0.1",
+                port=8765,
+                dashboard_html=dashboard_path,
+                sessions_root=codex_root,
+                claude_projects_root=claude_root,
+                pi_agent_root=pi_agent_root,
+            )
+            fixed_now = datetime(2026, 3, 4, 15, 0, tzinfo=timezone.utc)
+
+            recalc_dashboard(config, now=fixed_now)
+            html = dashboard_path.read_text(encoding="utf-8")
+            dataset = self._read_dataset_from_html(html)
+
+            self.assertEqual(
+                dataset["providers_available"],
+                {"codex": True, "claude": False, "pi": True, "combined": True},
+            )
+            self.assertEqual(dataset["providers"]["pi"]["rows"], [{"date": "2026-03-03", "sessions": 1, "total_tokens": 33}])
+            self.assertIn('<option value="combined">Combined</option>', html)
+            self.assertIn('<option value="codex">Codex</option>', html)
+            self.assertIn('<option value="pi">PI</option>', html)
+            self.assertNotIn('<option value="claude">Claude</option>', html)
 
 
 if __name__ == "__main__":

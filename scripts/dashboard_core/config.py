@@ -12,6 +12,7 @@ class DashboardConfig:
     dashboard_html: Path
     sessions_root: Path
     claude_projects_root: Path
+    pi_agent_root: Path
 
     @classmethod
     def from_env(cls, repo_root: Path) -> "DashboardConfig":
@@ -34,6 +35,12 @@ class DashboardConfig:
                 os.environ.get(
                     "AI_USAGE_CLAUDE_PROJECTS_ROOT",
                     str(Path.home() / ".claude" / "projects"),
+                )
+            ),
+            pi_agent_root=Path(
+                os.environ.get(
+                    "AI_USAGE_PI_AGENT_ROOT",
+                    str(Path.home() / ".pi" / "agent"),
                 )
             ),
         )

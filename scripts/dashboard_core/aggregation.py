@@ -66,9 +66,13 @@ def summary_from_daily(daily: dict[dt.date, DailyTotals]) -> dict[str, int]:
     }
 
 
-def providers_available(codex_rows: list[dict[str, int | str]], claude_rows: list[dict[str, int | str]]) -> dict[str, bool]:
+def providers_available(codex_source: object, claude_source: object, pi_source: object = False) -> dict[str, bool]:
+    codex_present = bool(codex_source)
+    claude_present = bool(claude_source)
+    pi_present = bool(pi_source)
     return {
-        "codex": bool(codex_rows),
-        "claude": bool(claude_rows),
-        "combined": bool(codex_rows or claude_rows),
+        "codex": codex_present,
+        "claude": claude_present,
+        "pi": pi_present,
+        "combined": bool(codex_present or claude_present or pi_present),
     }
