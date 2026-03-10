@@ -8,7 +8,7 @@ from .collectors import collect_claude_daily_totals, collect_codex_daily_totals,
 from .config import DashboardConfig
 from .models import round_cost
 from .pricing import PricingCatalog
-from .render import build_breakdown_table_body, build_stats_section, build_table_body, rewrite_dashboard_html
+from .render import build_breakdown_table_body, build_stats_sections, build_table_body, rewrite_dashboard_html
 
 
 _HTML_CACHE: dict[str, tuple[int, str]] = {}
@@ -87,7 +87,7 @@ def recalc_dashboard(config: DashboardConfig, now: dt.datetime | None = None) ->
     prev2_week_sunday = prev_week_monday - dt.timedelta(days=1)
     prev2_week_sessions, prev2_week_total = sum_range(combined_daily_all, prev2_week_monday, prev2_week_sunday)
 
-    stats_section = build_stats_section(
+    fixed_stats_section, range_stats_section = build_stats_sections(
         today=today,
         ytd_total=ytd_total,
         days_count=days_count,
@@ -148,7 +148,14 @@ def recalc_dashboard(config: DashboardConfig, now: dt.datetime | None = None) ->
     }
 
     html = read_dashboard_html(config.dashboard_html)
-    html = rewrite_dashboard_html(html, stats_section, table_body, breakdown_body, dataset_payload)
+    html = rewrite_dashboard_html(
+        html,
+        fixed_stats_section,
+        range_stats_section,
+        table_body,
+        breakdown_body,
+        dataset_payload,
+    )
     write_dashboard_html(config.dashboard_html, html)
 
     return {

@@ -8,7 +8,15 @@ import re
 USAGE_DATASET_PATTERN = re.compile(r'<script id="usageDataset" type="application/json">.*?</script>', re.DOTALL)
 PROVIDER_SELECT_OPEN = '<select id="usageProvider"'
 PROVIDER_SELECT_CLOSE = "</select>"
-STATS_SECTION_PATTERN = re.compile(r'^[ \t]*<section class="stats">.*?</section>', re.DOTALL | re.MULTILINE)
+FIXED_STATS_SECTION_PATTERN = re.compile(
+    r'^[ \t]*<section id="fixedStats" class="stats(?: [^"]*)?">.*?</section>',
+    re.DOTALL | re.MULTILINE,
+)
+RANGE_STATS_SECTION_PATTERN = re.compile(
+    r'^[ \t]*<section id="rangeStats" class="stats(?: [^"]*)?">.*?</section>',
+    re.DOTALL | re.MULTILINE,
+)
+LEGACY_STATS_SECTION_PATTERN = re.compile(r'^[ \t]*<section class="stats">.*?</section>', re.DOTALL | re.MULTILINE)
 DAILY_USAGE_TBODY_PATTERN = re.compile(r'<tbody id="dailyUsageTableBody">.*?</tbody>', re.DOTALL)
 BREAKDOWN_TBODY_PATTERN = re.compile(r'<tbody id="usageBreakdownTableBody">.*?</tbody>', re.DOTALL)
 
@@ -28,7 +36,7 @@ def format_cost_display(value: float, cost_complete: bool) -> str:
     return rendered if cost_complete else f"{rendered} (partial)"
 
 
-def build_stats_section(
+def build_stats_sections(
     *,
     today: dt.date,
     ytd_total: int,
@@ -57,8 +65,27 @@ def build_stats_section(
     prev2_week_sunday: dt.date,
     prev2_week_sessions: int,
     prev2_week_total: int,
-) -> str:
-    return f"""    <section class=\"stats\">
+) -> tuple[str, str]:
+    fixed_stats_section = f"""    <section id=\"fixedStats\" class=\"stats stats-fixed\">
+      <article class=\"stat\">
+        <div class=\"label\">Today ({today.isoformat()}, {today_sessions} sessions)</div>
+        <div class=\"value\">{format_number(today_total)}</div>
+      </article>
+      <article class=\"stat\">
+        <div class=\"label\">Current Week ({current_monday.isoformat()} to {current_week_end.isoformat()}, {current_week_sessions} sessions)</div>
+        <div class=\"value\">{format_number(current_week_total)}</div>
+      </article>
+      <article class=\"stat\">
+        <div class=\"label\">Previous Week ({prev_week_monday.isoformat()} to {prev_week_sunday.isoformat()}, {prev_week_sessions} sessions)</div>
+        <div class=\"value\">{format_number(prev_week_total)}</div>
+      </article>
+      <article class=\"stat\">
+        <div class=\"label\">2 Weeks Ago ({prev2_week_monday.isoformat()} to {prev2_week_sunday.isoformat()}, {prev2_week_sessions} sessions)</div>
+        <div class=\"value\">{format_number(prev2_week_total)}</div>
+      </article>
+    </section>"""
+
+    range_stats_section = f"""    <section id=\"rangeStats\" class=\"stats\">
       <article class=\"stat\">
         <div class=\"label\">YTD Total Tokens</div>
         <div class=\"value\">{format_number(ytd_total)}</div>
@@ -103,23 +130,9 @@ def build_stats_section(
         <div class=\"label\">YTD Cached Cost</div>
         <div class=\"value\">{format_cost_display(cached_cost_total, cost_complete)}</div>
       </article>
-      <article class=\"stat\">
-        <div class=\"label\">Today ({today.isoformat()}, {today_sessions} sessions)</div>
-        <div class=\"value\">{format_number(today_total)}</div>
-      </article>
-      <article class=\"stat\">
-        <div class=\"label\">Current Week ({current_monday.isoformat()} to {current_week_end.isoformat()}, {current_week_sessions} sessions)</div>
-        <div class=\"value\">{format_number(current_week_total)}</div>
-      </article>
-      <article class=\"stat\">
-        <div class=\"label\">Previous Week ({prev_week_monday.isoformat()} to {prev_week_sunday.isoformat()}, {prev_week_sessions} sessions)</div>
-        <div class=\"value\">{format_number(prev_week_total)}</div>
-      </article>
-      <article class=\"stat\">
-        <div class=\"label\">2 Weeks Ago ({prev2_week_monday.isoformat()} to {prev2_week_sunday.isoformat()}, {prev2_week_sessions} sessions)</div>
-        <div class=\"value\">{format_number(prev2_week_total)}</div>
-      </article>
     </section>"""
+
+    return fixed_stats_section, range_stats_section
 
 
 def build_table_body(rows: list[object]) -> str:
@@ -217,8 +230,24 @@ def rewrite_provider_select(html: str, dataset: dict) -> str:
     )
 
 
-def rewrite_dashboard_html(html: str, stats_section: str, table_body: str, breakdown_body: str, dataset: dict) -> str:
-    updated = STATS_SECTION_PATTERN.sub(stats_section, html, count=1)
+def rewrite_dashboard_html(
+    html: str,
+    fixed_stats_section: str,
+    range_stats_section: str,
+    table_body: str,
+    breakdown_body: str,
+    dataset: dict,
+) -> str:
+    updated = html
+    if FIXED_STATS_SECTION_PATTERN.search(updated) and RANGE_STATS_SECTION_PATTERN.search(updated):
+        updated = FIXED_STATS_SECTION_PATTERN.sub(fixed_stats_section, updated, count=1)
+        updated = RANGE_STATS_SECTION_PATTERN.sub(range_stats_section, updated, count=1)
+    else:
+        updated = LEGACY_STATS_SECTION_PATTERN.sub(
+            f"{fixed_stats_section}\n\n{range_stats_section}",
+            updated,
+            count=1,
+        )
     updated = DAILY_USAGE_TBODY_PATTERN.sub(table_body, updated, count=1)
     updated = BREAKDOWN_TBODY_PATTERN.sub(breakdown_body, updated, count=1)
     updated = rewrite_provider_select(updated, dataset)

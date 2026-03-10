@@ -66,6 +66,19 @@ class RuntimeHtmlTests(unittest.TestCase):
         self.assertIn('>Cached</th>', html)
         self.assertIn('>Total Cost</th>', html)
         self.assertIn('const pricingMetadata = usageDataset?.pricing || {};', html)
+        self.assertIn('id="fixedStats"', html)
+        self.assertIn('id="rangeStats"', html)
+        self.assertLess(html.index('id="fixedStats"'), html.index('class="panel range-panel"'))
+        self.assertLess(html.index('class="panel range-panel"'), html.index('id="rangeStats"'))
+        self.assertIn('const fixedStatCards = Array.from(document.querySelectorAll("#fixedStats .stat"));', html)
+        self.assertIn('const rangeStatCards = Array.from(document.querySelectorAll("#rangeStats .stat"));', html)
+        self.assertIn('value="input-desc">Input Tokens (High to Low)</option>', html)
+        self.assertIn('value="output-desc">Output Tokens (High to Low)</option>', html)
+        self.assertIn('value="cached-desc">Cached Tokens (High to Low)</option>', html)
+        self.assertIn('value="total-cost-desc">Total Cost (High to Low)</option>', html)
+        self.assertIn('value="input-cost-desc">Input Cost (High to Low)</option>', html)
+        self.assertIn('value="output-cost-desc">Output Cost (High to Low)</option>', html)
+        self.assertIn('value="cached-cost-desc">Cached Cost (High to Low)</option>', html)
 
 
 if __name__ == "__main__":

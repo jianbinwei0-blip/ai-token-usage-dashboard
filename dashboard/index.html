@@ -654,6 +654,25 @@
       </div>
     </section>
 
+    <section id="fixedStats" class="stats stats-fixed">
+      <article class="stat">
+        <div class="label">Today (2026-03-02, 7 sessions)</div>
+        <div class="value">99,349,683</div>
+      </article>
+      <article class="stat">
+        <div class="label">Current Week (2026-03-02 to 2026-03-02, 7 sessions)</div>
+        <div class="value">99,349,683</div>
+      </article>
+      <article class="stat">
+        <div class="label">Previous Week (2026-02-23 to 2026-03-01, 132 sessions)</div>
+        <div class="value">713,291,755</div>
+      </article>
+      <article class="stat">
+        <div class="label">2 Weeks Ago (2026-02-16 to 2026-02-22, 63 sessions)</div>
+        <div class="value">232,106,787</div>
+      </article>
+    </section>
+
     <section class="panel range-panel">
       <div class="usage-chart-head">
         <h2 class="usage-chart-title">Time Range</h2>
@@ -692,7 +711,8 @@
       </div>
     </section>
 
-                                                                                                                                                                                                                                                                                                                                                                                                                                <section class="stats">
+
+    <section id="rangeStats" class="stats">
       <article class="stat">
         <div class="label">YTD Total Tokens</div>
         <div class="value">3,469,573,407</div>
@@ -737,22 +757,6 @@
         <div class="label">YTD Cached Cost</div>
         <div class="value">$0.0000 (partial)</div>
       </article>
-      <article class="stat">
-        <div class="label">Today (2026-03-02, 7 sessions)</div>
-        <div class="value">99,349,683</div>
-      </article>
-      <article class="stat">
-        <div class="label">Current Week (2026-03-02 to 2026-03-02, 7 sessions)</div>
-        <div class="value">99,349,683</div>
-      </article>
-      <article class="stat">
-        <div class="label">Previous Week (2026-02-23 to 2026-03-01, 132 sessions)</div>
-        <div class="value">713,291,755</div>
-      </article>
-      <article class="stat">
-        <div class="label">2 Weeks Ago (2026-02-16 to 2026-02-22, 63 sessions)</div>
-        <div class="value">232,106,787</div>
-      </article>
     </section>
 
     <section class="panel">
@@ -763,7 +767,14 @@
             <div class="usage-chart-control-group">
               <label for="usageChartSort">Sort</label>
               <select id="usageChartSort" class="usage-chart-sort" aria-label="Sort usage chart">
-                <option value="tokens-desc">Tokens (High to Low)</option>
+                <option value="tokens-desc">Total Tokens (High to Low)</option>
+                <option value="input-desc">Input Tokens (High to Low)</option>
+                <option value="output-desc">Output Tokens (High to Low)</option>
+                <option value="cached-desc">Cached Tokens (High to Low)</option>
+                <option value="total-cost-desc">Total Cost (High to Low)</option>
+                <option value="input-cost-desc">Input Cost (High to Low)</option>
+                <option value="output-cost-desc">Output Cost (High to Low)</option>
+                <option value="cached-cost-desc">Cached Cost (High to Low)</option>
                 <option value="sessions-desc">Sessions (High to Low)</option>
                 <option value="date-desc">Date (Newest First)</option>
               </select>
@@ -869,22 +880,23 @@
     const breakdownTableBody = document.getElementById("usageBreakdownTableBody");
     const breakdownSummary = document.getElementById("usageBreakdownSummary");
 
-    const statCards = Array.from(document.querySelectorAll(".stats .stat"));
-    const statRangeTotal = statCards[0] ?? null;
-    const statRangeDays = statCards[1] ?? null;
-    const statRangeSessions = statCards[2] ?? null;
-    const statRangeHighest = statCards[3] ?? null;
-    const statRangeInputTokens = statCards[4] ?? null;
-    const statRangeOutputTokens = statCards[5] ?? null;
-    const statRangeCachedTokens = statCards[6] ?? null;
-    const statRangeTotalCost = statCards[7] ?? null;
-    const statRangeInputCost = statCards[8] ?? null;
-    const statRangeOutputCost = statCards[9] ?? null;
-    const statRangeCachedCost = statCards[10] ?? null;
-    const statToday = statCards[11] ?? null;
-    const statCurrentWeek = statCards[12] ?? null;
-    const statPreviousWeek = statCards[13] ?? null;
-    const statTwoWeeksAgo = statCards[14] ?? null;
+    const fixedStatCards = Array.from(document.querySelectorAll("#fixedStats .stat"));
+    const rangeStatCards = Array.from(document.querySelectorAll("#rangeStats .stat"));
+    const statToday = fixedStatCards[0] ?? null;
+    const statCurrentWeek = fixedStatCards[1] ?? null;
+    const statPreviousWeek = fixedStatCards[2] ?? null;
+    const statTwoWeeksAgo = fixedStatCards[3] ?? null;
+    const statRangeTotal = rangeStatCards[0] ?? null;
+    const statRangeDays = rangeStatCards[1] ?? null;
+    const statRangeSessions = rangeStatCards[2] ?? null;
+    const statRangeHighest = rangeStatCards[3] ?? null;
+    const statRangeInputTokens = rangeStatCards[4] ?? null;
+    const statRangeOutputTokens = rangeStatCards[5] ?? null;
+    const statRangeCachedTokens = rangeStatCards[6] ?? null;
+    const statRangeTotalCost = rangeStatCards[7] ?? null;
+    const statRangeInputCost = rangeStatCards[8] ?? null;
+    const statRangeOutputCost = rangeStatCards[9] ?? null;
+    const statRangeCachedCost = rangeStatCards[10] ?? null;
 
     const providerLabels = {
       codex: "Codex",
@@ -1247,38 +1259,39 @@
       return sumRows(rows.filter((item) => item.dateObj >= fromDate && item.dateObj <= toDate));
     };
 
-    const sortRows = (rows, sortKey) => {
-      const sorted = [...rows];
-      switch (sortKey) {
-        case "sessions-desc":
-          sorted.sort((a, b) => b.sessions - a.sessions || b.total - a.total || b.dateObj - a.dateObj);
-          break;
-        case "date-desc":
-          sorted.sort((a, b) => b.dateObj - a.dateObj || b.total - a.total);
-          break;
-        case "tokens-desc":
-        default:
-          sorted.sort((a, b) => b.total - a.total || b.sessions - a.sessions || b.dateObj - a.dateObj);
-          break;
-      }
-      return sorted;
+    const sortComparators = {
+      "tokens-desc": (a, b) => b.total - a.total || b.sessions - a.sessions || b.dateObj - a.dateObj,
+      "input-desc": (a, b) => b.input - a.input || b.total - a.total || b.sessions - a.sessions || b.dateObj - a.dateObj,
+      "output-desc": (a, b) => b.output - a.output || b.total - a.total || b.sessions - a.sessions || b.dateObj - a.dateObj,
+      "cached-desc": (a, b) => b.cached - a.cached || b.total - a.total || b.sessions - a.sessions || b.dateObj - a.dateObj,
+      "total-cost-desc": (a, b) => b.totalCost - a.totalCost || b.total - a.total || b.sessions - a.sessions || b.dateObj - a.dateObj,
+      "input-cost-desc": (a, b) => b.inputCost - a.inputCost || b.input - a.input || b.total - a.total || b.sessions - a.sessions || b.dateObj - a.dateObj,
+      "output-cost-desc": (a, b) => b.outputCost - a.outputCost || b.output - a.output || b.total - a.total || b.sessions - a.sessions || b.dateObj - a.dateObj,
+      "cached-cost-desc": (a, b) => b.cachedCost - a.cachedCost || b.cached - a.cached || b.total - a.total || b.sessions - a.sessions || b.dateObj - a.dateObj,
+      "sessions-desc": (a, b) => b.sessions - a.sessions || b.total - a.total || b.dateObj - a.dateObj,
+      "date-desc": (a, b) => b.dateObj - a.dateObj || b.total - a.total,
     };
+
+    const sortLabels = {
+      "tokens-desc": "total tokens",
+      "input-desc": "input tokens",
+      "output-desc": "output tokens",
+      "cached-desc": "cached tokens",
+      "total-cost-desc": "total cost",
+      "input-cost-desc": "input cost",
+      "output-cost-desc": "output cost",
+      "cached-cost-desc": "cached cost",
+      "sessions-desc": "sessions",
+      "date-desc": "date",
+    };
+
+    const sortRows = (rows, sortKey) => [...rows].sort(sortComparators[sortKey] || sortComparators["tokens-desc"]);
 
     const sortBreakdownRows = (rows) => [...rows].sort(
       (a, b) => b.total - a.total || b.sessions - a.sessions || a.agent_cli.localeCompare(b.agent_cli) || a.model.localeCompare(b.model)
     );
 
-    const sortLabel = (sortKey) => {
-      switch (sortKey) {
-        case "sessions-desc":
-          return "sessions";
-        case "date-desc":
-          return "date";
-        case "tokens-desc":
-        default:
-          return "tokens";
-      }
-    };
+    const sortLabel = (sortKey) => sortLabels[sortKey] || sortLabels["tokens-desc"];
 
     let activeProvider = "combined";
     let rowData = [];

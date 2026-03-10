@@ -353,6 +353,7 @@ class HarnessContractsTests(unittest.TestCase):
             self.assertIn("Current Week (2026-03-02 to 2026-03-04, 2 sessions)", html)
             self.assertIn("YTD Input Tokens", html)
             self.assertIn("YTD Total Cost", html)
+            self.assertLess(html.index("Today (2026-03-04, 1 sessions)"), html.index("YTD Total Tokens"))
             self.assertEqual(html.count('id="usageDataset"'), 1)
 
     def test_recalc_pipeline_marks_partial_cost_when_model_pricing_is_unmapped(self) -> None:
