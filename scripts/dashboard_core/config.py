@@ -14,10 +14,12 @@ class DashboardConfig:
     claude_projects_root: Path
     pi_agent_root: Path
     pricing_file: Path | None = None
+    parse_cache_file: Path | None = None
 
     @classmethod
     def from_env(cls, repo_root: Path) -> "DashboardConfig":
         pricing_file_value = os.environ.get("AI_USAGE_PRICING_FILE")
+        parse_cache_file_value = os.environ.get("AI_USAGE_PARSE_CACHE_FILE")
         return cls(
             host=os.environ.get("AI_USAGE_SERVER_HOST", "127.0.0.1"),
             port=int(os.environ.get("AI_USAGE_SERVER_PORT", "8765")),
@@ -46,4 +48,5 @@ class DashboardConfig:
                 )
             ),
             pricing_file=Path(pricing_file_value) if pricing_file_value else None,
+            parse_cache_file=Path(parse_cache_file_value) if parse_cache_file_value else (repo_root / "tmp" / "recalc_parse_cache.json"),
         )

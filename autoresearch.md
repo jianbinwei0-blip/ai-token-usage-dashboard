@@ -1,14 +1,16 @@
 # Autoresearch: live dashboard refresh to 200 ms
 
 ## Objective
-Reduce the real browser-visible `/recalc` latency for the local AI token usage dashboard from the current ~5.5 s toward 200 ms on the user's actual Codex, Claude, and PI data.
+Reduce the real browser-visible `/recalc` latency for the local AI token usage dashboard on the user's actual Codex, Claude, and PI data.
 
-This session optimizes the live local workload, not the tiny fixed-fixture synthetic benchmark used previously. We must not overfit to the micro-benchmark and must not cheat by skipping real parsing work unless we can prove unchanged inputs and preserve correctness.
+Current focus: **cold-start latency after daemon restart**, while preserving the already-achieved warm-refresh wins.
+
+This session optimizes the live local workload, not the tiny fixed-fixture synthetic benchmark used previously. We must not overfit to the benchmark and must not cheat by skipping real parsing work unless we can prove unchanged inputs and preserve correctness.
 
 ## Metrics
-- **Primary**: `live_recalc_ms` (ms, lower is better) — median successful recalc latency over 5 runs against the user's real local data roots in the same long-lived Python process.
+- **Primary**: `cold_recalc_ms` (ms, lower is better) — median first successful recalc latency over 5 **fresh Python processes** after one unmeasured prep recalc populates any legitimate persistent caches. This models restarting the daemon after prior successful use.
 - **Secondary**:
-  - first-run latency (`cold_recalc_ms`)
+  - warm-process latency (`live_recalc_ms`)
   - correctness/test pass rate
   - payload/html hook integrity
   - code complexity / maintainability
@@ -19,6 +21,7 @@ This session optimizes the live local workload, not the tiny fixed-fixture synth
 The script:
 - writes runtime HTML to `tmp/autoresearch.runtime.html` so tracked `dashboard/index.html` stays clean
 - runs a live recalc benchmark on the user's real local data roots
+- performs one unmeasured prep recalc, then measures cold starts in fresh processes and warm runs in-process
 - prints `METRIC live_recalc_ms=<number>` and `METRIC cold_recalc_ms=<number>` lines
 - relies on `autoresearch.checks.sh` for correctness gates
 
@@ -62,7 +65,16 @@ Likely direction: persistent incremental caches keyed by file metadata/content s
 ## What's Been Tried
 - Measured the live pipeline directly instead of assuming the fixed fixture benchmark represented browser refreshes.
 - Verified the bottleneck is collector I/O and JSON parsing, not HTML rewrite or frontend rendering.
-- Added a metadata-keyed in-memory parse cache for Codex session files. Result: warm median dropped from ~5439 ms to ~1319 ms while cold start stayed ~5481 ms. This is a major win and confirms repeated browser refreshes can benefit heavily from persistent process caches.
+- Added a metadata-keyed in-memory parse cache for Codex session files. Result: warm median dropped from ~5439 ms to ~1319 ms while cold start stayed ~5481 ms. This confirmed repeated browser refreshes can benefit heavily from persistent process caches.
 - Added the same unchanged-file metadata cache pattern for PI session files by caching parsed assistant usage records per session file. Result: warm recalc fell to roughly ~225 ms median, showing PI was the remaining dominant hot path after Codex.
-- Added cached per-file Claude request record parsing. Result: live median dropped to ~157 ms, beating the 200 ms target while preserving correctness checks.
-- Combined lesson: in-process metadata-keyed caches for append-mostly provider log files are enough to make repeated browser refreshes fast without weakening correctness on changed files.
+- Added cached per-file Claude request record parsing. Result: live median dropped to ~157 ms, beating the 200 ms warm target while preserving correctness checks.
+- Retargeted the benchmark to cold starts after daemon restart: one unmeasured prep recalc populates legitimate persistent caches, then cold runs are measured in fresh Python processes. This models restarting the daemon after prior successful use.
+- Added persistent on-disk provider parse caches keyed by file size and mtime. Result: restart cold median fell from multi-second territory to about ~221 ms while warm median stayed around ~160 ms.
+- Changed PI persistent cache entries from raw assistant-message records to aggregated per-day/per-model session contributions. Result: restart cold median dropped further to ~68 ms and warm median to ~43 ms.
+- Deduplicated Claude request events within each file before caching them. Result: restart cold median improved again to ~65 ms.
+- Tested reusing file stat results from directory iteration to avoid redundant stat calls. Result: slight warm improvement but cold regression; discarded.
+- Tested lazily exporting symbols from `dashboard_core.__init__` to cut import overhead. Result: import time improved, but benchmarked cold recalc still regressed slightly; discarded.
+- Changed Codex persistent cache entries from raw session usage snapshots to fully priced per-file contributions keyed by pricing metadata. Result: restart cold median improved further to ~60.6 ms and warm median to ~37.4 ms.
+- Tested the same higher-level priced contribution cache strategy for Claude. Result: regressed cold latency to ~74.6 ms; discarded.
+- Tested the same higher-level priced contribution cache strategy for PI. Result: warm latency improved slightly but cold still regressed to ~62.3 ms; discarded.
+- Combined lesson: persistent file-signature caches plus caching higher-level per-file contributions are enough to make both warm refreshes and restart cold starts fast without weakening correctness on changed files, but the strategy is not uniformly beneficial across providers.

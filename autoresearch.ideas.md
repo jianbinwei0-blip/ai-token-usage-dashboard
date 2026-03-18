@@ -1,4 +1,3 @@
-- Consider a generic provider file-contribution cache helper so Codex/Claude/PI all reuse the same invalidation model.
-- Cache provider file listings / metadata scans when directory trees are unchanged to shave more warm-refresh overhead now that parsing cost is largely gone.
+- Consider a more compact on-disk cache format to reduce restart cold cache-load overhead now that provider rebuild work is already very small.
+- Consider a generic provider file-contribution cache helper so Codex/Claude/PI all reuse the same invalidation and persistence model, but treat this as maintainability work more than a performance bet.
 - If unchanged-file caching plateaus on other workloads, explore append-only incremental parsing for actively growing files using remembered byte offsets plus file signatures.
-- Consider an optional persisted on-disk cache between server restarts, but only after in-process caches are exhausted and correctness/invalidation rules are well understood.

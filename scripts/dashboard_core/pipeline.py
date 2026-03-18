@@ -12,7 +12,13 @@ from .aggregation import (
     providers_available,
     sum_range,
 )
-from .collectors import collect_claude_usage_data, collect_codex_usage_data, collect_pi_usage_data
+from .collectors import (
+    collect_claude_usage_data,
+    collect_codex_usage_data,
+    collect_pi_usage_data,
+    load_persistent_parse_caches,
+    save_persistent_parse_caches,
+)
 from .config import DashboardConfig
 from .models import round_cost
 from .pricing import PricingCatalog
@@ -51,12 +57,14 @@ def recalc_dashboard(config: DashboardConfig, now: dt.datetime | None = None) ->
     ytd_from = dt.date(today.year, 1, 1)
     pricing_catalog = PricingCatalog.from_file(config.pricing_file)
 
+    load_persistent_parse_caches(config.parse_cache_file)
     codex_daily_all, codex_activity_all = collect_codex_usage_data(config.sessions_root, pricing_catalog=pricing_catalog)
     claude_daily_all, claude_activity_all = collect_claude_usage_data(
         config.claude_projects_root,
         pricing_catalog=pricing_catalog,
     )
     pi_daily_all, pi_activity_all = collect_pi_usage_data(config.pi_agent_root, pricing_catalog=pricing_catalog)
+    save_persistent_parse_caches(config.parse_cache_file)
     combined_daily_all = combine_daily_totals(codex_daily_all, claude_daily_all, pi_daily_all)
     combined_activity_all = combine_activity_totals(codex_activity_all, claude_activity_all, pi_activity_all)
 
