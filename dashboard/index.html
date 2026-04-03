@@ -365,6 +365,15 @@
       grid-template-columns: repeat(2, minmax(0, 1fr));
     }
 
+    #rangeStats .stat-group--averages {
+      grid-column: span 6;
+      border-color: rgba(255, 209, 102, 0.16);
+    }
+
+    #rangeStats .stat-group--averages .stat-group__grid {
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+    }
+
     #rangeStats .stat-group--tokens {
       grid-column: span 6;
       border-color: rgba(122, 211, 255, 0.14);
@@ -374,8 +383,17 @@
       grid-template-columns: repeat(3, minmax(0, 1fr));
     }
 
+    #rangeStats .stat-group--cost-averages {
+      grid-column: span 6;
+      border-color: rgba(135, 255, 224, 0.16);
+    }
+
+    #rangeStats .stat-group--cost-averages .stat-group__grid {
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+    }
+
     #rangeStats .stat-group--costs {
-      grid-column: span 12;
+      grid-column: span 6;
       border-color: rgba(122, 255, 191, 0.14);
     }
 
@@ -536,6 +554,16 @@
       color: color-mix(in srgb, var(--text) 90%, var(--accent-3));
     }
 
+    #rangeStats .stat--average .value {
+      font-size: clamp(1.12rem, 1.34vw, 1.48rem);
+      color: color-mix(in srgb, var(--text) 90%, rgb(255, 209, 102));
+    }
+
+    #rangeStats .stat--average-cost .value {
+      font-size: clamp(1.08rem, 1.26vw, 1.36rem);
+      color: color-mix(in srgb, var(--text) 90%, rgb(135, 255, 224));
+    }
+
     #rangeStats .stat--cost .value {
       font-size: clamp(1.08rem, 1.28vw, 1.38rem);
       color: color-mix(in srgb, var(--text) 90%, var(--accent));
@@ -553,6 +581,11 @@
       #rangeStats .stat-group--overview .stat-group__grid,
       #rangeStats .stat-group--costs .stat-group__grid {
         grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+
+      #rangeStats .stat-group--averages .stat-group__grid,
+      #rangeStats .stat-group--cost-averages .stat-group__grid {
+        grid-template-columns: repeat(3, minmax(0, 1fr));
       }
     }
 
@@ -580,7 +613,9 @@
       .stat-group__grid,
       .stats-fixed .stat-group__grid,
       #rangeStats .stat-group--overview .stat-group__grid,
+      #rangeStats .stat-group--averages .stat-group__grid,
       #rangeStats .stat-group--tokens .stat-group__grid,
+      #rangeStats .stat-group--cost-averages .stat-group__grid,
       #rangeStats .stat-group--costs .stat-group__grid {
         grid-template-columns: 1fr;
       }
@@ -1441,6 +1476,26 @@
           </article>
         </div>
       </div>
+      <div class="stat-group stat-group--averages">
+        <div class="stat-group__header">
+          <div class="stat-group__eyebrow">Average Pace</div>
+          <div class="stat-group__hint">Normalized to the selected span</div>
+        </div>
+        <div class="stat-group__grid">
+          <article class="stat stat--average">
+            <div class="label">Monthly Avg</div>
+            <div class="value">1,945,637,886</div>
+          </article>
+          <article class="stat stat--average">
+            <div class="label">Weekly Avg</div>
+            <div class="value">447,620,514</div>
+          </article>
+          <article class="stat stat--average">
+            <div class="label">Daily Avg</div>
+            <div class="value">63,945,788</div>
+          </article>
+        </div>
+      </div>
       <div class="stat-group stat-group--tokens">
         <div class="stat-group__header">
           <div class="stat-group__eyebrow">Token Flow</div>
@@ -1458,6 +1513,26 @@
           <article class="stat stat--tokens">
             <div class="label">Cached Tokens</div>
             <div class="value">5,064,767,652</div>
+          </article>
+        </div>
+      </div>
+      <div class="stat-group stat-group--cost-averages">
+        <div class="stat-group__header">
+          <div class="stat-group__eyebrow">Average Spend</div>
+          <div class="stat-group__hint">Normalized to the selected span</div>
+        </div>
+        <div class="stat-group__grid">
+          <article class="stat stat--average-cost">
+            <div class="label">Monthly Avg Cost</div>
+            <div class="value">$4,862.95</div>
+          </article>
+          <article class="stat stat--average-cost">
+            <div class="label">Weekly Avg Cost</div>
+            <div class="value">$1,118.75</div>
+          </article>
+          <article class="stat stat--average-cost">
+            <div class="label">Daily Avg Cost</div>
+            <div class="value">$159.82</div>
           </article>
         </div>
       </div>
@@ -1740,13 +1815,19 @@
     const statRangeDays = rangeStatCards[1] ?? null;
     const statRangeSessions = rangeStatCards[2] ?? null;
     const statRangeHighest = rangeStatCards[3] ?? null;
-    const statRangeInputTokens = rangeStatCards[4] ?? null;
-    const statRangeOutputTokens = rangeStatCards[5] ?? null;
-    const statRangeCachedTokens = rangeStatCards[6] ?? null;
-    const statRangeTotalCost = rangeStatCards[7] ?? null;
-    const statRangeInputCost = rangeStatCards[8] ?? null;
-    const statRangeOutputCost = rangeStatCards[9] ?? null;
-    const statRangeCachedCost = rangeStatCards[10] ?? null;
+    const statRangeMonthlyAvg = rangeStatCards[4] ?? null;
+    const statRangeWeeklyAvg = rangeStatCards[5] ?? null;
+    const statRangeDailyAvg = rangeStatCards[6] ?? null;
+    const statRangeInputTokens = rangeStatCards[7] ?? null;
+    const statRangeOutputTokens = rangeStatCards[8] ?? null;
+    const statRangeCachedTokens = rangeStatCards[9] ?? null;
+    const statRangeMonthlyAvgCost = rangeStatCards[10] ?? null;
+    const statRangeWeeklyAvgCost = rangeStatCards[11] ?? null;
+    const statRangeDailyAvgCost = rangeStatCards[12] ?? null;
+    const statRangeTotalCost = rangeStatCards[13] ?? null;
+    const statRangeInputCost = rangeStatCards[14] ?? null;
+    const statRangeOutputCost = rangeStatCards[15] ?? null;
+    const statRangeCachedCost = rangeStatCards[16] ?? null;
 
     const providerLabels = {
       codex: "Codex",
@@ -2176,6 +2257,21 @@
     };
 
     const formatSessionCount = (count) => `${formatNumber(count)} ${count === 1 ? "session" : "sessions"}`;
+    const averageMonthSpanDays = 365.2425 / 12;
+    const inclusiveDaySpan = (fromDate, toDate) => {
+      if (!(fromDate instanceof Date) || Number.isNaN(fromDate.getTime()) || !(toDate instanceof Date) || Number.isNaN(toDate.getTime())) {
+        return 1;
+      }
+      const diffDays = Math.round((toDateOnly(toDate) - toDateOnly(fromDate)) / 86400000);
+      return Math.max(diffDays + 1, 1);
+    };
+    const formatAverageTokens = (totalTokens, selectedDaySpan, periodDays) => formatNumber(
+      Math.round(parseMetric(totalTokens) * periodDays / Math.max(selectedDaySpan, 1))
+    );
+    const formatAverageCost = (totalCost, selectedDaySpan, periodDays, costComplete) => formatCostDisplay(
+      parseMetric(totalCost) * periodDays / Math.max(selectedDaySpan, 1),
+      costComplete
+    );
 
     const formatPeriodLabel = (title, startDate, endDate, sessions) => {
       const startIso = toIsoDate(startDate);
@@ -2584,6 +2680,13 @@
       const filteredActivityRows = activityData.filter((item) => item.dateObj >= fromDate && item.dateObj <= toDate);
       const rangeTotals = sumRows(chartRows);
       const rangeHighestTokens = chartRows.length ? Math.max(...chartRows.map((item) => item.total), 0) : 0;
+      const selectedDaySpan = inclusiveDaySpan(fromDate, toDate);
+      const rangeMonthlyAvgTokens = formatAverageTokens(rangeTotals.total, selectedDaySpan, averageMonthSpanDays);
+      const rangeWeeklyAvgTokens = formatAverageTokens(rangeTotals.total, selectedDaySpan, 7);
+      const rangeDailyAvgTokens = formatAverageTokens(rangeTotals.total, selectedDaySpan, 1);
+      const rangeMonthlyAvgCost = formatAverageCost(rangeTotals.totalCost, selectedDaySpan, averageMonthSpanDays, rangeTotals.costComplete);
+      const rangeWeeklyAvgCost = formatAverageCost(rangeTotals.totalCost, selectedDaySpan, 7, rangeTotals.costComplete);
+      const rangeDailyAvgCost = formatAverageCost(rangeTotals.totalCost, selectedDaySpan, 1, rangeTotals.costComplete);
       const providerLabel = providerLabels[activeProvider] || "Combined";
       const selectedLabel = selectedRangeLabel();
       const breakdownRows = aggregateBreakdownForRows(chartRows);
@@ -2603,9 +2706,15 @@
         updateCard(statRangeDays, "Days With Usage", "0");
         updateCard(statRangeSessions, "Total Sessions", "0");
         updateCard(statRangeHighest, "Highest Single Day", "0");
+        updateCard(statRangeMonthlyAvg, "Monthly Avg", "0");
+        updateCard(statRangeWeeklyAvg, "Weekly Avg", "0");
+        updateCard(statRangeDailyAvg, "Daily Avg", "0");
         updateCard(statRangeInputTokens, "Input Tokens", "0");
         updateCard(statRangeOutputTokens, "Output Tokens", "0");
         updateCard(statRangeCachedTokens, "Cached Tokens", "0");
+        updateCard(statRangeMonthlyAvgCost, "Monthly Avg Cost", "$0.0000");
+        updateCard(statRangeWeeklyAvgCost, "Weekly Avg Cost", "$0.0000");
+        updateCard(statRangeDailyAvgCost, "Daily Avg Cost", "$0.0000");
         updateCard(statRangeTotalCost, "Total Cost", "$0.0000");
         updateCard(statRangeInputCost, "Input Cost", "$0.0000");
         updateCard(statRangeOutputCost, "Output Cost", "$0.0000");
@@ -2625,9 +2734,15 @@
       updateCard(statRangeDays, "Days With Usage", formatNumber(chartRows.length));
       updateCard(statRangeSessions, "Total Sessions", formatNumber(rangeTotals.sessions));
       updateCard(statRangeHighest, "Highest Single Day", formatNumber(rangeHighestTokens));
+      updateCard(statRangeMonthlyAvg, "Monthly Avg", rangeMonthlyAvgTokens);
+      updateCard(statRangeWeeklyAvg, "Weekly Avg", rangeWeeklyAvgTokens);
+      updateCard(statRangeDailyAvg, "Daily Avg", rangeDailyAvgTokens);
       updateCard(statRangeInputTokens, "Input Tokens", formatNumber(rangeTotals.input));
       updateCard(statRangeOutputTokens, "Output Tokens", formatNumber(rangeTotals.output));
       updateCard(statRangeCachedTokens, "Cached Tokens", formatNumber(rangeTotals.cached));
+      updateCard(statRangeMonthlyAvgCost, "Monthly Avg Cost", rangeMonthlyAvgCost);
+      updateCard(statRangeWeeklyAvgCost, "Weekly Avg Cost", rangeWeeklyAvgCost);
+      updateCard(statRangeDailyAvgCost, "Daily Avg Cost", rangeDailyAvgCost);
       updateCard(statRangeTotalCost, "Total Cost", formatCostDisplay(rangeTotals.totalCost, rangeTotals.costComplete));
       updateCard(statRangeInputCost, "Input Cost", formatCostDisplay(rangeTotals.inputCost, rangeTotals.costComplete));
       updateCard(statRangeOutputCost, "Output Cost", formatCostDisplay(rangeTotals.outputCost, rangeTotals.costComplete));

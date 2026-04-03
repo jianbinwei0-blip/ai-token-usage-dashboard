@@ -80,6 +80,7 @@ def recalc_dashboard(config: DashboardConfig, now: dt.datetime | None = None) ->
 
     rows = combined_ytd.ranked_values
     summary = combined_ytd.summary
+    selected_day_span = (today - ytd_from).days + 1
     days_count = int(summary["days_with_usage"])
     sessions_total = int(summary["sessions"])
     input_total = int(summary["input_tokens"])
@@ -110,6 +111,7 @@ def recalc_dashboard(config: DashboardConfig, now: dt.datetime | None = None) ->
     fixed_stats_section, range_stats_section = build_stats_sections(
         today=today,
         ytd_total=ytd_total,
+        selected_day_span=selected_day_span,
         days_count=days_count,
         sessions_total=sessions_total,
         highest=highest,

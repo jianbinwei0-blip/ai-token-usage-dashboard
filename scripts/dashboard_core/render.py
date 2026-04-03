@@ -46,10 +46,21 @@ def format_cost_display(value: float, cost_complete: bool) -> str:
     return rendered if cost_complete else f"{rendered} (partial)"
 
 
+def format_average_tokens(total_tokens: int, selected_day_span: int, period_days: float) -> str:
+    normalized_total = round(total_tokens * period_days / max(selected_day_span, 1))
+    return format_number(int(normalized_total))
+
+
+def format_average_cost(total_cost: float, selected_day_span: int, period_days: float, cost_complete: bool) -> str:
+    normalized_total = total_cost * period_days / max(selected_day_span, 1)
+    return format_cost_display(normalized_total, cost_complete)
+
+
 def build_stats_sections(
     *,
     today: dt.date,
     ytd_total: int,
+    selected_day_span: int,
     days_count: int,
     sessions_total: int,
     highest: int,
@@ -136,6 +147,26 @@ def build_stats_sections(
           </article>
         </div>
       </div>
+      <div class="stat-group stat-group--averages">
+        <div class="stat-group__header">
+          <div class="stat-group__eyebrow">Average Pace</div>
+          <div class="stat-group__hint">Normalized to the selected span</div>
+        </div>
+        <div class="stat-group__grid">
+          <article class="stat stat--average">
+            <div class="label">Monthly Avg</div>
+            <div class="value">{format_average_tokens(ytd_total, selected_day_span, 365.2425 / 12)}</div>
+          </article>
+          <article class="stat stat--average">
+            <div class="label">Weekly Avg</div>
+            <div class="value">{format_average_tokens(ytd_total, selected_day_span, 7)}</div>
+          </article>
+          <article class="stat stat--average">
+            <div class="label">Daily Avg</div>
+            <div class="value">{format_average_tokens(ytd_total, selected_day_span, 1)}</div>
+          </article>
+        </div>
+      </div>
       <div class="stat-group stat-group--tokens">
         <div class="stat-group__header">
           <div class="stat-group__eyebrow">Token Flow</div>
@@ -153,6 +184,26 @@ def build_stats_sections(
           <article class="stat stat--tokens">
             <div class="label">Cached Tokens</div>
             <div class="value">{format_number(cached_total)}</div>
+          </article>
+        </div>
+      </div>
+      <div class="stat-group stat-group--cost-averages">
+        <div class="stat-group__header">
+          <div class="stat-group__eyebrow">Average Spend</div>
+          <div class="stat-group__hint">Normalized to the selected span</div>
+        </div>
+        <div class="stat-group__grid">
+          <article class="stat stat--average-cost">
+            <div class="label">Monthly Avg Cost</div>
+            <div class="value">{format_average_cost(total_cost, selected_day_span, 365.2425 / 12, cost_complete)}</div>
+          </article>
+          <article class="stat stat--average-cost">
+            <div class="label">Weekly Avg Cost</div>
+            <div class="value">{format_average_cost(total_cost, selected_day_span, 7, cost_complete)}</div>
+          </article>
+          <article class="stat stat--average-cost">
+            <div class="label">Daily Avg Cost</div>
+            <div class="value">{format_average_cost(total_cost, selected_day_span, 1, cost_complete)}</div>
           </article>
         </div>
       </div>

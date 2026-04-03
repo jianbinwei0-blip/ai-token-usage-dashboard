@@ -386,6 +386,12 @@ class HarnessContractsTests(unittest.TestCase):
 
             self.assertIn('<div class="label">Today</div>', html)
             self.assertIn('<div class="label">Current Week</div>', html)
+            self.assertIn("Monthly Avg", html)
+            self.assertIn("Weekly Avg", html)
+            self.assertIn("Daily Avg", html)
+            self.assertIn("Monthly Avg Cost", html)
+            self.assertIn("Weekly Avg Cost", html)
+            self.assertIn("Daily Avg Cost", html)
             self.assertIn("Input Tokens", html)
             self.assertIn("Total Cost", html)
             self.assertLess(html.index('<div class="label">Today</div>'), html.index("Total Tokens"))
