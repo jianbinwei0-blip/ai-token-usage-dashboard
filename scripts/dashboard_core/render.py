@@ -130,19 +130,19 @@ def build_stats_sections(
         </div>
         <div class="stat-group__grid">
           <article class="stat stat--overview">
-            <div class="label">Total Tokens</div>
+            <div class="label">Total</div>
             <div class="value">{format_number(ytd_total)}</div>
           </article>
           <article class="stat stat--overview">
-            <div class="label">Days With Usage</div>
+            <div class="label">Active Days</div>
             <div class="value">{days_count}</div>
           </article>
           <article class="stat stat--overview">
-            <div class="label">Total Sessions</div>
+            <div class="label">Sessions</div>
             <div class="value">{sessions_total}</div>
           </article>
           <article class="stat stat--overview">
-            <div class="label">Highest Single Day</div>
+            <div class="label">Peak Day</div>
             <div class="value">{format_number(highest)}</div>
           </article>
         </div>
@@ -154,15 +154,15 @@ def build_stats_sections(
         </div>
         <div class="stat-group__grid">
           <article class="stat stat--average">
-            <div class="label">Monthly Avg</div>
+            <div class="label">Monthly</div>
             <div class="value">{format_average_tokens(ytd_total, selected_day_span, 365.2425 / 12)}</div>
           </article>
           <article class="stat stat--average">
-            <div class="label">Weekly Avg</div>
+            <div class="label">Weekly</div>
             <div class="value">{format_average_tokens(ytd_total, selected_day_span, 7)}</div>
           </article>
           <article class="stat stat--average">
-            <div class="label">Daily Avg</div>
+            <div class="label">Daily</div>
             <div class="value">{format_average_tokens(ytd_total, selected_day_span, 1)}</div>
           </article>
         </div>
@@ -174,15 +174,15 @@ def build_stats_sections(
         </div>
         <div class="stat-group__grid">
           <article class="stat stat--tokens">
-            <div class="label">Input Tokens</div>
+            <div class="label">Input</div>
             <div class="value">{format_number(input_total)}</div>
           </article>
           <article class="stat stat--tokens">
-            <div class="label">Output Tokens</div>
+            <div class="label">Output</div>
             <div class="value">{format_number(output_total)}</div>
           </article>
           <article class="stat stat--tokens">
-            <div class="label">Cached Tokens</div>
+            <div class="label">Cached</div>
             <div class="value">{format_number(cached_total)}</div>
           </article>
         </div>
@@ -194,15 +194,15 @@ def build_stats_sections(
         </div>
         <div class="stat-group__grid">
           <article class="stat stat--average-cost">
-            <div class="label">Monthly Avg Cost</div>
+            <div class="label">Monthly</div>
             <div class="value">{format_average_cost(total_cost, selected_day_span, 365.2425 / 12, cost_complete)}</div>
           </article>
           <article class="stat stat--average-cost">
-            <div class="label">Weekly Avg Cost</div>
+            <div class="label">Weekly</div>
             <div class="value">{format_average_cost(total_cost, selected_day_span, 7, cost_complete)}</div>
           </article>
           <article class="stat stat--average-cost">
-            <div class="label">Daily Avg Cost</div>
+            <div class="label">Daily</div>
             <div class="value">{format_average_cost(total_cost, selected_day_span, 1, cost_complete)}</div>
           </article>
         </div>
@@ -214,19 +214,19 @@ def build_stats_sections(
         </div>
         <div class="stat-group__grid">
           <article class="stat stat--cost">
-            <div class="label">Total Cost</div>
+            <div class="label">Total</div>
             <div class="value">{format_cost_display(total_cost, cost_complete)}</div>
           </article>
           <article class="stat stat--cost">
-            <div class="label">Input Cost</div>
+            <div class="label">Input</div>
             <div class="value">{format_cost_display(input_cost_total, cost_complete)}</div>
           </article>
           <article class="stat stat--cost">
-            <div class="label">Output Cost</div>
+            <div class="label">Output</div>
             <div class="value">{format_cost_display(output_cost_total, cost_complete)}</div>
           </article>
           <article class="stat stat--cost">
-            <div class="label">Cached Cost</div>
+            <div class="label">Cached</div>
             <div class="value">{format_cost_display(cached_cost_total, cost_complete)}</div>
           </article>
         </div>

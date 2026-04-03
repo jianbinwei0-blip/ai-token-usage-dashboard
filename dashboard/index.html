@@ -1459,19 +1459,19 @@
         </div>
         <div class="stat-group__grid">
           <article class="stat stat--overview">
-            <div class="label">Total Tokens</div>
+            <div class="label">Total</div>
             <div class="value">5,371,446,165</div>
           </article>
           <article class="stat stat--overview">
-            <div class="label">Days With Usage</div>
+            <div class="label">Active Days</div>
             <div class="value">64</div>
           </article>
           <article class="stat stat--overview">
-            <div class="label">Total Sessions</div>
+            <div class="label">Sessions</div>
             <div class="value">760</div>
           </article>
           <article class="stat stat--overview">
-            <div class="label">Highest Single Day</div>
+            <div class="label">Peak Day</div>
             <div class="value">863,135,070</div>
           </article>
         </div>
@@ -1483,15 +1483,15 @@
         </div>
         <div class="stat-group__grid">
           <article class="stat stat--average">
-            <div class="label">Monthly Avg</div>
+            <div class="label">Monthly</div>
             <div class="value">1,945,637,886</div>
           </article>
           <article class="stat stat--average">
-            <div class="label">Weekly Avg</div>
+            <div class="label">Weekly</div>
             <div class="value">447,620,514</div>
           </article>
           <article class="stat stat--average">
-            <div class="label">Daily Avg</div>
+            <div class="label">Daily</div>
             <div class="value">63,945,788</div>
           </article>
         </div>
@@ -1503,15 +1503,15 @@
         </div>
         <div class="stat-group__grid">
           <article class="stat stat--tokens">
-            <div class="label">Input Tokens</div>
+            <div class="label">Input</div>
             <div class="value">4,711,041,079</div>
           </article>
           <article class="stat stat--tokens">
-            <div class="label">Output Tokens</div>
+            <div class="label">Output</div>
             <div class="value">24,329,818</div>
           </article>
           <article class="stat stat--tokens">
-            <div class="label">Cached Tokens</div>
+            <div class="label">Cached</div>
             <div class="value">5,064,767,652</div>
           </article>
         </div>
@@ -1523,15 +1523,15 @@
         </div>
         <div class="stat-group__grid">
           <article class="stat stat--average-cost">
-            <div class="label">Monthly Avg Cost</div>
+            <div class="label">Monthly</div>
             <div class="value">$4,862.95</div>
           </article>
           <article class="stat stat--average-cost">
-            <div class="label">Weekly Avg Cost</div>
+            <div class="label">Weekly</div>
             <div class="value">$1,118.75</div>
           </article>
           <article class="stat stat--average-cost">
-            <div class="label">Daily Avg Cost</div>
+            <div class="label">Daily</div>
             <div class="value">$159.82</div>
           </article>
         </div>
@@ -1543,19 +1543,19 @@
         </div>
         <div class="stat-group__grid">
           <article class="stat stat--cost">
-            <div class="label">Total Cost</div>
+            <div class="label">Total</div>
             <div class="value">$13,425.03</div>
           </article>
           <article class="stat stat--cost">
-            <div class="label">Input Cost</div>
+            <div class="label">Input</div>
             <div class="value">$11,775.67</div>
           </article>
           <article class="stat stat--cost">
-            <div class="label">Output Cost</div>
+            <div class="label">Output</div>
             <div class="value">$365.03</div>
           </article>
           <article class="stat stat--cost">
-            <div class="label">Cached Cost</div>
+            <div class="label">Cached</div>
             <div class="value">$1,284.33</div>
           </article>
         </div>
@@ -2702,23 +2702,23 @@
         usageChartMax.textContent = "Tokens max: 0";
         if (usageChartSessionsMax) usageChartSessionsMax.textContent = "Sessions max: 0";
         if (usageChartNote) usageChartNote.textContent = `No usage days for ${providerLabel} in ${selectedLabel}.`;
-        updateCard(statRangeTotal, "Total Tokens", "0");
-        updateCard(statRangeDays, "Days With Usage", "0");
-        updateCard(statRangeSessions, "Total Sessions", "0");
-        updateCard(statRangeHighest, "Highest Single Day", "0");
-        updateCard(statRangeMonthlyAvg, "Monthly Avg", "0");
-        updateCard(statRangeWeeklyAvg, "Weekly Avg", "0");
-        updateCard(statRangeDailyAvg, "Daily Avg", "0");
-        updateCard(statRangeInputTokens, "Input Tokens", "0");
-        updateCard(statRangeOutputTokens, "Output Tokens", "0");
-        updateCard(statRangeCachedTokens, "Cached Tokens", "0");
-        updateCard(statRangeMonthlyAvgCost, "Monthly Avg Cost", "$0.0000");
-        updateCard(statRangeWeeklyAvgCost, "Weekly Avg Cost", "$0.0000");
-        updateCard(statRangeDailyAvgCost, "Daily Avg Cost", "$0.0000");
-        updateCard(statRangeTotalCost, "Total Cost", "$0.0000");
-        updateCard(statRangeInputCost, "Input Cost", "$0.0000");
-        updateCard(statRangeOutputCost, "Output Cost", "$0.0000");
-        updateCard(statRangeCachedCost, "Cached Cost", "$0.0000");
+        updateCard(statRangeTotal, "Total", "0");
+        updateCard(statRangeDays, "Active Days", "0");
+        updateCard(statRangeSessions, "Sessions", "0");
+        updateCard(statRangeHighest, "Peak Day", "0");
+        updateCard(statRangeMonthlyAvg, "Monthly", "0");
+        updateCard(statRangeWeeklyAvg, "Weekly", "0");
+        updateCard(statRangeDailyAvg, "Daily", "0");
+        updateCard(statRangeInputTokens, "Input", "0");
+        updateCard(statRangeOutputTokens, "Output", "0");
+        updateCard(statRangeCachedTokens, "Cached", "0");
+        updateCard(statRangeMonthlyAvgCost, "Monthly", "$0.0000");
+        updateCard(statRangeWeeklyAvgCost, "Weekly", "$0.0000");
+        updateCard(statRangeDailyAvgCost, "Daily", "$0.0000");
+        updateCard(statRangeTotalCost, "Total", "$0.0000");
+        updateCard(statRangeInputCost, "Input", "$0.0000");
+        updateCard(statRangeOutputCost, "Output", "$0.0000");
+        updateCard(statRangeCachedCost, "Cached", "$0.0000");
         const empty = document.createElement("div");
         empty.className = "usage-chart-empty";
         empty.textContent = "No usage rows available.";
@@ -2730,23 +2730,23 @@
       const maxSessions = Math.max(...chartRows.map((item) => item.sessions), 1);
       usageChartMax.textContent = `Tokens max: ${formatNumber(maxTokens)}`;
       if (usageChartSessionsMax) usageChartSessionsMax.textContent = `Sessions max: ${formatNumber(maxSessions)}`;
-      updateCard(statRangeTotal, "Total Tokens", formatNumber(rangeTotals.total));
-      updateCard(statRangeDays, "Days With Usage", formatNumber(chartRows.length));
-      updateCard(statRangeSessions, "Total Sessions", formatNumber(rangeTotals.sessions));
-      updateCard(statRangeHighest, "Highest Single Day", formatNumber(rangeHighestTokens));
-      updateCard(statRangeMonthlyAvg, "Monthly Avg", rangeMonthlyAvgTokens);
-      updateCard(statRangeWeeklyAvg, "Weekly Avg", rangeWeeklyAvgTokens);
-      updateCard(statRangeDailyAvg, "Daily Avg", rangeDailyAvgTokens);
-      updateCard(statRangeInputTokens, "Input Tokens", formatNumber(rangeTotals.input));
-      updateCard(statRangeOutputTokens, "Output Tokens", formatNumber(rangeTotals.output));
-      updateCard(statRangeCachedTokens, "Cached Tokens", formatNumber(rangeTotals.cached));
-      updateCard(statRangeMonthlyAvgCost, "Monthly Avg Cost", rangeMonthlyAvgCost);
-      updateCard(statRangeWeeklyAvgCost, "Weekly Avg Cost", rangeWeeklyAvgCost);
-      updateCard(statRangeDailyAvgCost, "Daily Avg Cost", rangeDailyAvgCost);
-      updateCard(statRangeTotalCost, "Total Cost", formatCostDisplay(rangeTotals.totalCost, rangeTotals.costComplete));
-      updateCard(statRangeInputCost, "Input Cost", formatCostDisplay(rangeTotals.inputCost, rangeTotals.costComplete));
-      updateCard(statRangeOutputCost, "Output Cost", formatCostDisplay(rangeTotals.outputCost, rangeTotals.costComplete));
-      updateCard(statRangeCachedCost, "Cached Cost", formatCostDisplay(rangeTotals.cachedCost, rangeTotals.costComplete));
+      updateCard(statRangeTotal, "Total", formatNumber(rangeTotals.total));
+      updateCard(statRangeDays, "Active Days", formatNumber(chartRows.length));
+      updateCard(statRangeSessions, "Sessions", formatNumber(rangeTotals.sessions));
+      updateCard(statRangeHighest, "Peak Day", formatNumber(rangeHighestTokens));
+      updateCard(statRangeMonthlyAvg, "Monthly", rangeMonthlyAvgTokens);
+      updateCard(statRangeWeeklyAvg, "Weekly", rangeWeeklyAvgTokens);
+      updateCard(statRangeDailyAvg, "Daily", rangeDailyAvgTokens);
+      updateCard(statRangeInputTokens, "Input", formatNumber(rangeTotals.input));
+      updateCard(statRangeOutputTokens, "Output", formatNumber(rangeTotals.output));
+      updateCard(statRangeCachedTokens, "Cached", formatNumber(rangeTotals.cached));
+      updateCard(statRangeMonthlyAvgCost, "Monthly", rangeMonthlyAvgCost);
+      updateCard(statRangeWeeklyAvgCost, "Weekly", rangeWeeklyAvgCost);
+      updateCard(statRangeDailyAvgCost, "Daily", rangeDailyAvgCost);
+      updateCard(statRangeTotalCost, "Total", formatCostDisplay(rangeTotals.totalCost, rangeTotals.costComplete));
+      updateCard(statRangeInputCost, "Input", formatCostDisplay(rangeTotals.inputCost, rangeTotals.costComplete));
+      updateCard(statRangeOutputCost, "Output", formatCostDisplay(rangeTotals.outputCost, rangeTotals.costComplete));
+      updateCard(statRangeCachedCost, "Cached", formatCostDisplay(rangeTotals.cachedCost, rangeTotals.costComplete));
       if (usageChartNote) {
         const dayWord = chartRows.length === 1 ? "day" : "days";
         usageChartNote.textContent = `Showing ${chartRows.length} ${dayWord} for ${providerLabel} in ${selectedLabel}, sorted by ${sortLabel(sortKey)}. Token and session bars use separate scales. Total cost ${formatCostDisplay(rangeTotals.totalCost, rangeTotals.costComplete)}.${partialCostWarning}`;
