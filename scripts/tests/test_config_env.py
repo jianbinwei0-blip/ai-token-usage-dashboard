@@ -22,6 +22,7 @@ class DashboardConfigEnvTests(unittest.TestCase):
                 "AI_USAGE_CLAUDE_PROJECTS_ROOT": "/tmp/ai-dashboard/claude",
                 "AI_USAGE_PI_AGENT_ROOT": "/tmp/ai-dashboard/pi-agent",
                 "AI_USAGE_PRICING_FILE": "/tmp/ai-dashboard/pricing.json",
+                "AI_USAGE_RECALC_LOG_FILE": "/tmp/ai-dashboard/recalc.jsonl",
             },
             clear=True,
         ):
@@ -34,6 +35,7 @@ class DashboardConfigEnvTests(unittest.TestCase):
         self.assertEqual(cfg.claude_projects_root, Path("/tmp/ai-dashboard/claude"))
         self.assertEqual(cfg.pi_agent_root, Path("/tmp/ai-dashboard/pi-agent"))
         self.assertEqual(cfg.pricing_file, Path("/tmp/ai-dashboard/pricing.json"))
+        self.assertEqual(cfg.recalc_log_file, Path("/tmp/ai-dashboard/recalc.jsonl"))
 
     def test_uses_defaults_when_env_is_unset(self) -> None:
         repo_root = Path("/tmp/repo")
@@ -47,6 +49,7 @@ class DashboardConfigEnvTests(unittest.TestCase):
         self.assertEqual(cfg.claude_projects_root, Path.home() / ".claude" / "projects")
         self.assertEqual(cfg.pi_agent_root, Path.home() / ".pi" / "agent")
         self.assertIsNone(cfg.pricing_file)
+        self.assertEqual(cfg.recalc_log_file, repo_root / "tmp" / "recalc_timings.jsonl")
 
 
 if __name__ == "__main__":

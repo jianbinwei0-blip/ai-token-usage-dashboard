@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import datetime as dt
 import json
+import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import urlparse
@@ -32,6 +33,7 @@ SESSIONS_ROOT = CONFIG.sessions_root
 CLAUDE_PROJECTS_ROOT = CONFIG.claude_projects_root
 PI_AGENT_ROOT = CONFIG.pi_agent_root
 PRICING_FILE = CONFIG.pricing_file
+RECALC_LOG_FILE = CONFIG.recalc_log_file
 
 
 # Compatibility helpers used by local tests and existing workflows.
@@ -83,10 +85,26 @@ def recalc_dashboard() -> dict:
     return recalc_dashboard_pipeline(CONFIG)
 
 
+def append_recalc_log(entry: dict[str, object]) -> None:
+    if RECALC_LOG_FILE is None:
+        return
+    try:
+        RECALC_LOG_FILE.parent.mkdir(parents=True, exist_ok=True)
+        with RECALC_LOG_FILE.open("a", encoding="utf-8") as handle:
+            handle.write(json.dumps(entry, separators=(",", ":")) + "\n")
+    except OSError:
+        return
+
+
 class Handler(BaseHTTPRequestHandler):
     server_version = "AIUsageRecalc/4.0"
 
-    def _set_headers(self, status_code: int = 200, content_type: str = "application/json") -> None:
+    def _set_headers(
+        self,
+        status_code: int = 200,
+        content_type: str = "application/json",
+        extra_headers: dict[str, str] | None = None,
+    ) -> None:
         self.send_response(status_code)
         self.send_header("Content-Type", content_type)
         if content_type == "text/html; charset=utf-8":
@@ -96,10 +114,12 @@ class Handler(BaseHTTPRequestHandler):
             self.send_header("Access-Control-Allow-Origin", "*")
             self.send_header("Access-Control-Allow-Methods", "GET, OPTIONS")
             self.send_header("Access-Control-Allow-Headers", "Content-Type")
+        for key, value in (extra_headers or {}).items():
+            self.send_header(key, value)
         self.end_headers()
 
-    def _write_json(self, payload: dict, status_code: int = 200) -> None:
-        self._set_headers(status_code=status_code)
+    def _write_json(self, payload: dict, status_code: int = 200, extra_headers: dict[str, str] | None = None) -> None:
+        self._set_headers(status_code=status_code, extra_headers=extra_headers)
         self.wfile.write(json.dumps(payload).encode("utf-8"))
 
     def _write_html(self, html: str, status_code: int = 200) -> None:
@@ -108,6 +128,29 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_OPTIONS(self) -> None:  # noqa: N802
         self._set_headers(status_code=204)
+
+    def _server_timing_headers(self, payload: dict) -> dict[str, str]:
+        timings = payload.get("timings_ms")
+        if not isinstance(timings, dict):
+            return {}
+
+        allowed_keys = (
+            "total",
+            "codex_collect",
+            "claude_collect",
+            "pi_collect",
+            "load_persistent_parse_caches",
+            "save_persistent_parse_caches",
+            "rewrite_dashboard_html",
+        )
+        entries: list[str] = []
+        for key in allowed_keys:
+            value = timings.get(key)
+            if not isinstance(value, (int, float)):
+                continue
+            metric_name = key.replace("_", "-")
+            entries.append(f"{metric_name};dur={float(value):.3f}")
+        return {"Server-Timing": ", ".join(entries)} if entries else {}
 
     def do_GET(self) -> None:  # noqa: N802
         path = urlparse(self.path).path
@@ -136,6 +179,7 @@ class Handler(BaseHTTPRequestHandler):
                     "claude_projects_root": str(CLAUDE_PROJECTS_ROOT),
                     "pi_agent_root": str(PI_AGENT_ROOT),
                     "pricing_file": str(PRICING_FILE) if PRICING_FILE else None,
+                    "recalc_log_file": str(RECALC_LOG_FILE) if RECALC_LOG_FILE else None,
                     "providers_available": providers_available(
                         SESSIONS_ROOT.exists(),
                         CLAUDE_PROJECTS_ROOT.exists(),
@@ -147,10 +191,38 @@ class Handler(BaseHTTPRequestHandler):
             return
 
         if path == "/recalc":
+            started = time.perf_counter()
             try:
                 payload = recalc_dashboard()
-                self._write_json(payload, status_code=200)
+                elapsed_ms = (time.perf_counter() - started) * 1000.0
+                timings = payload.get("timings_ms") if isinstance(payload.get("timings_ms"), dict) else {}
+                codex_ms = float(timings.get("codex_collect") or 0.0)
+                claude_ms = float(timings.get("claude_collect") or 0.0)
+                pi_ms = float(timings.get("pi_collect") or 0.0)
+                print(
+                    f"[recalc] total={elapsed_ms:.3f}ms codex={codex_ms:.3f}ms claude={claude_ms:.3f}ms pi={pi_ms:.3f}ms"
+                )
+                append_recalc_log(
+                    {
+                        "timestamp": dt.datetime.now(dt.timezone.utc).isoformat(),
+                        "ok": True,
+                        "elapsed_ms": round(elapsed_ms, 3),
+                        "updated_at": payload.get("updated_at"),
+                        "timings_ms": payload.get("timings_ms") if isinstance(payload.get("timings_ms"), dict) else {},
+                    }
+                )
+                self._write_json(payload, status_code=200, extra_headers=self._server_timing_headers(payload))
             except Exception as exc:  # noqa: BLE001
+                elapsed_ms = (time.perf_counter() - started) * 1000.0
+                print(f"[recalc] failed after {elapsed_ms:.3f}ms: {exc}")
+                append_recalc_log(
+                    {
+                        "timestamp": dt.datetime.now(dt.timezone.utc).isoformat(),
+                        "ok": False,
+                        "elapsed_ms": round(elapsed_ms, 3),
+                        "error": str(exc),
+                    }
+                )
                 self._write_json(
                     {
                         "ok": False,

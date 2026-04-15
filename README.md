@@ -73,6 +73,7 @@ Environment variables:
 - `AI_USAGE_PI_AGENT_ROOT` (default: `~/.pi/agent`)
 - `AI_USAGE_DASHBOARD_HTML` (default via `scripts/run_local.sh`: `<repo>/tmp/index.runtime.html`, seeded from `<repo>/dashboard/index.html`)
 - `AI_USAGE_PRICING_FILE` (optional JSON rate-card override file merged over the built-in pricing table)
+- `AI_USAGE_RECALC_LOG_FILE` (optional JSONL file for persistent `/recalc` timing/error logs; default: `<repo>/tmp/recalc_timings.jsonl`)
 
 ## Optional: Run as LaunchAgent (macOS)
 
@@ -105,8 +106,9 @@ curl http://127.0.0.1:8765/health
 - A built-in versioned pricing table is used for derived Codex and Claude costs, and can be overridden via `AI_USAGE_PRICING_FILE`.
 - Codex usage keeps the latest `token_count` snapshot per session, extracts `originator`/`source` for the CLI bucket, uses the latest observed `turn_context.payload.model` when present, and prices uncached input separately from cached tokens.
 - Claude request usage is deduplicated by `(sessionId, requestId)`, keeps the highest observed token values for the request, computes `cached_tokens = cache_creation_input_tokens + cache_read_input_tokens`, and derives cost from the model rate card.
-- PI usage is read from `~/.pi/agent/sessions/**/*.jsonl`, tracks the active model via `model_change` events, computes `cached_tokens = cacheRead + cacheWrite`, and prefers native `message.usage.cost.*` when present.
+- PI usage is read from `~/.pi/agent/sessions/**/*.jsonl`, tracks the active model via `model_change` events, computes `cached_tokens = cacheRead + cacheWrite`, prefers native `message.usage.cost.*` when present, and resumes parsing from the last verified byte offset when a session log grows append-only.
 - Unmapped provider/model pricing is surfaced as partial cost in the API/UI instead of silently treated as trusted zero cost.
+- `/recalc` responses expose `Server-Timing` headers and `timings_ms` in the JSON payload, and the dashboard hero shows the latest refresh timing summary for quick diagnosis.
 - No third-party services are required.
 
 ## Validation

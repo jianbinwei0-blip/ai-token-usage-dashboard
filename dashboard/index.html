@@ -1370,6 +1370,7 @@
         <div class="meta-row meta-row--refresh">
           <span id="autoRecalcStatus" class="chip">Auto refresh: waiting for refresh</span>
           <span id="lastRefreshTime" class="chip">Last refresh: --</span>
+          <span id="lastRecalcTiming" class="chip">Refresh timing: --</span>
         </div>
       </div>
     </section>
@@ -1777,10 +1778,12 @@
   <script>
     const autoRecalcChip = document.getElementById("autoRecalcStatus");
     const lastRefreshChip = document.getElementById("lastRefreshTime");
+    const lastRecalcTimingChip = document.getElementById("lastRecalcTiming");
     const sourceChip = document.getElementById("usageSourceChip");
     const usageDatasetNode = document.getElementById("usageDataset");
     const autoRecalcFlag = "aiTokenDashboardAutoRecalcPending";
     const lastRefreshStorageKey = "aiTokenDashboardLastRefreshAt";
+    const lastRecalcTimingStorageKey = "aiTokenDashboardLastRecalcTiming";
     const sortStorageKey = "aiTokenChartSort";
     const rangeFromStorageKey = "aiTokenChartRangeFrom";
     const rangeToStorageKey = "aiTokenChartRangeTo";
@@ -2151,6 +2154,48 @@
       const saved = localStorage.getItem(lastRefreshStorageKey);
       lastRefreshChip.textContent = formatLastRefresh(saved);
     };
+    const normalizeRecalcTimings = (raw) => {
+      if (!raw || typeof raw !== "object") return null;
+      const normalized = {};
+      ["total", "codex_collect", "claude_collect", "pi_collect"].forEach((key) => {
+        const value = Number(raw[key]);
+        if (Number.isFinite(value) && value >= 0) {
+          normalized[key] = value;
+        }
+      });
+      return Object.keys(normalized).length ? normalized : null;
+    };
+    const getStoredRecalcTimings = () => {
+      try {
+        return normalizeRecalcTimings(JSON.parse(localStorage.getItem(lastRecalcTimingStorageKey) || "null"));
+      } catch {
+        return null;
+      }
+    };
+    const formatRecalcTiming = (raw) => {
+      const timings = normalizeRecalcTimings(raw);
+      if (!timings) return "Refresh timing: --";
+      const parts = [];
+      if (Number.isFinite(timings.total)) parts.push(`total ${Math.round(timings.total)} ms`);
+      if (Number.isFinite(timings.codex_collect)) parts.push(`codex ${Math.round(timings.codex_collect)} ms`);
+      if (Number.isFinite(timings.claude_collect)) parts.push(`claude ${Math.round(timings.claude_collect)} ms`);
+      if (Number.isFinite(timings.pi_collect)) parts.push(`pi ${Math.round(timings.pi_collect)} ms`);
+      return `Refresh timing: ${parts.join(" · ")}`;
+    };
+    const setLastRecalcTiming = (raw) => {
+      const timings = normalizeRecalcTimings(raw);
+      if (!timings) return;
+      localStorage.setItem(lastRecalcTimingStorageKey, JSON.stringify(timings));
+      if (lastRecalcTimingChip) lastRecalcTimingChip.textContent = formatRecalcTiming(timings);
+    };
+    const renderLastRecalcTiming = () => {
+      if (!lastRecalcTimingChip) return;
+      const timings = normalizeRecalcTimings(usageDataset?.timings_ms) || getStoredRecalcTimings();
+      lastRecalcTimingChip.textContent = formatRecalcTiming(timings);
+      if (timings) {
+        localStorage.setItem(lastRecalcTimingStorageKey, JSON.stringify(timings));
+      }
+    };
     const formatTimeOnly = (dateObj) => dateObj.toLocaleTimeString([], {
       hour: "2-digit",
       minute: "2-digit",
@@ -2200,6 +2245,9 @@
           const updatedAt = payload && payload.updated_at ? payload.updated_at : "just now";
           if (payload && payload.updated_at) {
             setLastRefresh(payload.updated_at);
+          }
+          if (payload && payload.timings_ms) {
+            setLastRecalcTiming(payload.timings_ms);
           }
           setAutoRecalcStatus(`Auto refresh: updated at ${updatedAt}`);
           window.location.reload();
@@ -2831,6 +2879,7 @@
 
     refreshStatValueDensity();
     renderLastRefresh();
+    renderLastRecalcTiming();
     if (sessionStorage.getItem(autoRecalcFlag) === "1") {
       sessionStorage.removeItem(autoRecalcFlag);
       setAutoRecalcStatus("Auto refresh: fresh snapshot loaded");

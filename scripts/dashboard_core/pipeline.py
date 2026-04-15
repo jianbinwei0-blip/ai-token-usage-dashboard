@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import datetime as dt
+import time
 from pathlib import Path
 
 from .aggregation import (
@@ -51,32 +52,56 @@ def write_dashboard_html(path: Path, html: str) -> None:
 
 
 def recalc_dashboard(config: DashboardConfig, now: dt.datetime | None = None) -> dict:
+    timings_ms: dict[str, float] = {}
+    total_started = time.perf_counter()
+
+    def measure(label: str, func):
+        started = time.perf_counter()
+        result = func()
+        timings_ms[label] = (time.perf_counter() - started) * 1000.0
+        return result
+
     now_utc = now.astimezone(dt.timezone.utc) if now is not None else dt.datetime.now(dt.timezone.utc)
     now_local = now_utc.astimezone()
     today = now_local.date()
     ytd_from = dt.date(today.year, 1, 1)
-    pricing_catalog = PricingCatalog.from_file(config.pricing_file)
+    pricing_catalog = measure("pricing_load", lambda: PricingCatalog.from_file(config.pricing_file))
 
-    load_persistent_parse_caches(config.parse_cache_file)
-    codex_daily_all, codex_activity_all = collect_codex_usage_data(config.sessions_root, pricing_catalog=pricing_catalog)
-    claude_daily_all, claude_activity_all = collect_claude_usage_data(
-        config.claude_projects_root,
-        pricing_catalog=pricing_catalog,
+    measure("load_persistent_parse_caches", lambda: load_persistent_parse_caches(config.parse_cache_file))
+    codex_daily_all, codex_activity_all = measure(
+        "codex_collect",
+        lambda: collect_codex_usage_data(config.sessions_root, pricing_catalog=pricing_catalog),
     )
-    pi_daily_all, pi_activity_all = collect_pi_usage_data(config.pi_agent_root, pricing_catalog=pricing_catalog)
-    save_persistent_parse_caches(config.parse_cache_file)
-    combined_daily_all = combine_daily_totals(codex_daily_all, claude_daily_all, pi_daily_all)
-    combined_activity_all = combine_activity_totals(codex_activity_all, claude_activity_all, pi_activity_all)
+    claude_daily_all, claude_activity_all = measure(
+        "claude_collect",
+        lambda: collect_claude_usage_data(
+            config.claude_projects_root,
+            pricing_catalog=pricing_catalog,
+        ),
+    )
+    pi_daily_all, pi_activity_all = measure(
+        "pi_collect",
+        lambda: collect_pi_usage_data(config.pi_agent_root, pricing_catalog=pricing_catalog),
+    )
+    measure("save_persistent_parse_caches", lambda: save_persistent_parse_caches(config.parse_cache_file))
+    combined_daily_all = measure("combine_daily", lambda: combine_daily_totals(codex_daily_all, claude_daily_all, pi_daily_all))
+    combined_activity_all = measure(
+        "combine_activity",
+        lambda: combine_activity_totals(codex_activity_all, claude_activity_all, pi_activity_all),
+    )
 
-    codex_all = materialize_daily(codex_daily_all)
-    claude_all = materialize_daily(claude_daily_all)
-    pi_all = materialize_daily(pi_daily_all)
-    combined_all = materialize_daily(combined_daily_all)
+    codex_all = measure("codex_materialize_all", lambda: materialize_daily(codex_daily_all))
+    claude_all = measure("claude_materialize_all", lambda: materialize_daily(claude_daily_all))
+    pi_all = measure("pi_materialize_all", lambda: materialize_daily(pi_daily_all))
+    combined_all = measure("combined_materialize_all", lambda: materialize_daily(combined_daily_all))
 
-    codex_ytd = materialize_daily(codex_daily_all, ytd_from, today)
-    claude_ytd = materialize_daily(claude_daily_all, ytd_from, today)
-    pi_ytd = materialize_daily(pi_daily_all, ytd_from, today)
-    combined_ytd = materialize_daily(combined_daily_all, ytd_from, today, include_breakdown_rows=True)
+    codex_ytd = measure("codex_materialize_ytd", lambda: materialize_daily(codex_daily_all, ytd_from, today))
+    claude_ytd = measure("claude_materialize_ytd", lambda: materialize_daily(claude_daily_all, ytd_from, today))
+    pi_ytd = measure("pi_materialize_ytd", lambda: materialize_daily(pi_daily_all, ytd_from, today))
+    combined_ytd = measure(
+        "combined_materialize_ytd",
+        lambda: materialize_daily(combined_daily_all, ytd_from, today, include_breakdown_rows=True),
+    )
 
     rows = combined_ytd.ranked_values
     summary = combined_ytd.summary
@@ -181,18 +206,22 @@ def recalc_dashboard(config: DashboardConfig, now: dt.datetime | None = None) ->
         },
     }
 
-    html = read_dashboard_html(config.dashboard_html)
-    html = rewrite_dashboard_html(
-        html,
-        fixed_stats_section,
-        range_stats_section,
-        table_body,
-        breakdown_body,
-        dataset_payload,
+    html = measure("read_dashboard_html", lambda: read_dashboard_html(config.dashboard_html))
+    html = measure(
+        "rewrite_dashboard_html",
+        lambda: rewrite_dashboard_html(
+            html,
+            fixed_stats_section,
+            range_stats_section,
+            table_body,
+            breakdown_body,
+            dataset_payload,
+        ),
     )
-    write_dashboard_html(config.dashboard_html, html)
+    measure("write_dashboard_html", lambda: write_dashboard_html(config.dashboard_html, html))
+    timings_ms["total"] = (time.perf_counter() - total_started) * 1000.0
 
-    return {
+    payload = {
         "ok": True,
         "updated_at": now_utc.isoformat(),
         "today": today.isoformat(),
@@ -223,3 +252,6 @@ def recalc_dashboard(config: DashboardConfig, now: dt.datetime | None = None) ->
             "combined": combined_ytd.summary,
         },
     }
+    if now is None:
+        payload["timings_ms"] = {key: round(value, 3) for key, value in timings_ms.items()}
+    return payload

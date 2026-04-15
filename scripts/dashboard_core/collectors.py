@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import datetime as dt
+import hashlib
 import json
 import os
 import re
@@ -17,10 +18,11 @@ CODEX_ROLLOUT_TIMESTAMP_PATTERN = re.compile(
 )
 _CODEX_SESSION_USAGE_CACHE: dict[str, tuple[int, int, str, dict[str, object] | None]] = {}
 _CLAUDE_REQUEST_RECORDS_CACHE: dict[str, tuple[int, int, list[dict[str, object]]]] = {}
-_PI_SESSION_RECORDS_CACHE: dict[str, tuple[int, int, tuple[str, list[dict[str, object]]]]] = {}
-_PERSISTENT_CACHE_VERSION = 1
+_PI_SESSION_RECORDS_CACHE: dict[str, tuple[int, int, dict[str, object]]] = {}
+_PERSISTENT_CACHE_VERSION = 2
 _PERSISTENT_CACHE_LOADED_FROM: str | None = None
 _PERSISTENT_CACHE_DIRTY = False
+_PI_APPEND_FAST_PATH_WINDOW_BYTES = 4096
 
 
 def safe_non_negative_int(value: object) -> int:
@@ -111,6 +113,38 @@ def merge_native_cost(target: dict[str, float] | None, native_cost: object) -> d
     return merged or target
 
 
+def _hash_bytes(value: bytes) -> str:
+    if not value:
+        return ""
+    return hashlib.blake2b(value, digest_size=16).hexdigest()
+
+
+def _read_file_signature_window(file_path: Path, start: int, end: int) -> str:
+    bounded_start = max(0, start)
+    bounded_end = max(bounded_start, end)
+    if bounded_end <= bounded_start:
+        return ""
+
+    try:
+        with file_path.open("rb") as handle:
+            handle.seek(bounded_start)
+            return _hash_bytes(handle.read(bounded_end - bounded_start))
+    except OSError:
+        return ""
+
+
+def empty_pi_contribution(session_id: str) -> dict[str, object]:
+    return {
+        "session_id": normalized_bucket_value(session_id, "unknown-session"),
+        "active_model": DEFAULT_MODEL,
+        "offset": 0,
+        "head_signature": "",
+        "boundary_signature": "",
+        "usage_rows": [],
+        "activity_rows": [],
+    }
+
+
 def serialize_pi_contribution(contribution: object) -> dict[str, object] | None:
     if not isinstance(contribution, dict):
         return None
@@ -120,6 +154,10 @@ def serialize_pi_contribution(contribution: object) -> dict[str, object] | None:
         return None
     return {
         "session_id": normalized_bucket_value(contribution.get("session_id"), "unknown-session"),
+        "active_model": normalized_bucket_value(contribution.get("active_model"), DEFAULT_MODEL),
+        "offset": safe_non_negative_int(contribution.get("offset")),
+        "head_signature": normalized_bucket_value(contribution.get("head_signature"), ""),
+        "boundary_signature": normalized_bucket_value(contribution.get("boundary_signature"), ""),
         "usage_rows": [dict(row) for row in usage_rows if isinstance(row, dict)],
         "activity_rows": [_serialize_record(row) for row in activity_rows if isinstance(row, dict)],
     }
@@ -134,9 +172,28 @@ def deserialize_pi_contribution(contribution: object) -> dict[str, object] | Non
         return None
     return {
         "session_id": normalized_bucket_value(contribution.get("session_id"), "unknown-session"),
+        "active_model": normalized_bucket_value(contribution.get("active_model"), DEFAULT_MODEL),
+        "offset": safe_non_negative_int(contribution.get("offset")),
+        "head_signature": normalized_bucket_value(contribution.get("head_signature"), ""),
+        "boundary_signature": normalized_bucket_value(contribution.get("boundary_signature"), ""),
         "usage_rows": [dict(row) for row in usage_rows if isinstance(row, dict)],
         "activity_rows": [row for item in activity_rows if (row := _deserialize_record(item)) is not None],
     }
+
+
+def clone_pi_contribution(contribution: dict[str, object] | None, *, session_id: str) -> dict[str, object]:
+    cloned = deserialize_pi_contribution(serialize_pi_contribution(contribution))
+    if cloned is not None:
+        return cloned
+    return empty_pi_contribution(session_id)
+
+
+def update_pi_contribution_signatures(file_path: Path, contribution: dict[str, object]) -> None:
+    processed_offset = safe_non_negative_int(contribution.get("offset"))
+    head_end = min(processed_offset, _PI_APPEND_FAST_PATH_WINDOW_BYTES)
+    boundary_start = max(0, processed_offset - _PI_APPEND_FAST_PATH_WINDOW_BYTES)
+    contribution["head_signature"] = _read_file_signature_window(file_path, 0, head_end)
+    contribution["boundary_signature"] = _read_file_signature_window(file_path, boundary_start, processed_offset)
 
 
 def load_persistent_parse_caches(cache_path: Path | None) -> None:
@@ -872,115 +929,220 @@ def collect_claude_daily_totals(
     return totals
 
 
-def parse_pi_session_contribution(file_path: Path) -> dict[str, object]:
-    session_id = file_path.stem
-    active_model = DEFAULT_MODEL
-    usage_rows: dict[tuple[str, str], dict[str, object]] = {}
-    activity_rows: dict[str, dict[str, object]] = {}
+def _pi_usage_rows_index(contribution: dict[str, object]) -> dict[tuple[str, str], dict[str, object]]:
+    indexed: dict[tuple[str, str], dict[str, object]] = {}
+    usage_rows = contribution.get("usage_rows")
+    if not isinstance(usage_rows, list):
+        usage_rows = []
+    normalized_rows: list[dict[str, object]] = []
+    for row in usage_rows:
+        if not isinstance(row, dict):
+            continue
+        date_value = row.get("date")
+        if not isinstance(date_value, str):
+            continue
+        normalized_row = dict(row)
+        normalized_row["model"] = normalized_bucket_value(normalized_row.get("model"), DEFAULT_MODEL)
+        normalized_rows.append(normalized_row)
+        indexed[(date_value, normalized_row["model"])] = normalized_row
+    contribution["usage_rows"] = normalized_rows
+    return indexed
 
-    with file_path.open("r", encoding="utf-8", errors="ignore") as handle:
-        for line in handle:
-            line = line.strip()
-            if not line:
-                continue
+
+def _pi_activity_rows_index(contribution: dict[str, object]) -> dict[str, dict[str, object]]:
+    indexed: dict[str, dict[str, object]] = {}
+    activity_rows = contribution.get("activity_rows")
+    if not isinstance(activity_rows, list):
+        activity_rows = []
+    normalized_rows: list[dict[str, object]] = []
+    for row in activity_rows:
+        if not isinstance(row, dict):
+            continue
+        date_value = row.get("date")
+        timestamp = row.get("timestamp")
+        if not isinstance(date_value, str) or not isinstance(timestamp, dt.datetime):
+            continue
+        normalized_row = {"date": date_value, "timestamp": timestamp}
+        normalized_rows.append(normalized_row)
+        indexed[date_value] = normalized_row
+    contribution["activity_rows"] = normalized_rows
+    return indexed
+
+
+def apply_pi_event_to_contribution(
+    contribution: dict[str, object],
+    event: dict[str, object],
+    usage_rows: dict[tuple[str, str], dict[str, object]],
+    activity_rows: dict[str, dict[str, object]],
+) -> None:
+    event_type = event.get("type")
+    session_id = normalized_bucket_value(contribution.get("session_id"), "unknown-session")
+    active_model = normalized_bucket_value(contribution.get("active_model"), DEFAULT_MODEL)
+
+    if event_type == "session":
+        contribution["session_id"] = normalized_bucket_value(event.get("id"), session_id)
+        return
+
+    if event_type == "model_change":
+        contribution["active_model"] = normalized_bucket_value(event.get("modelId"), active_model)
+        return
+
+    if event_type != "message":
+        return
+
+    local_timestamp = parse_timestamp_local(event.get("timestamp"))
+    if local_timestamp is None:
+        return
+
+    message = event.get("message") or {}
+    if not isinstance(message, dict) or message.get("role") != "assistant":
+        return
+
+    usage = message.get("usage") or {}
+    if not isinstance(usage, dict):
+        return
+
+    usage_date = local_timestamp.date().isoformat()
+    model = normalized_bucket_value(message.get("model"), active_model)
+    input_tokens = safe_non_negative_int(usage.get("input"))
+    output_tokens = safe_non_negative_int(usage.get("output"))
+    cache_read_tokens = safe_non_negative_int(usage.get("cacheRead"))
+    cache_write_tokens = safe_non_negative_int(usage.get("cacheWrite"))
+    cached_tokens = cache_read_tokens + cache_write_tokens
+    total_tokens = safe_non_negative_int(usage.get("totalTokens"))
+    if total_tokens == 0 and (input_tokens or output_tokens or cached_tokens):
+        total_tokens = input_tokens + output_tokens + cached_tokens
+
+    usage_bucket = usage_rows.setdefault(
+        (usage_date, model),
+        {
+            "date": usage_date,
+            "model": model,
+            "input_tokens": 0,
+            "output_tokens": 0,
+            "cache_read_tokens": 0,
+            "cache_write_tokens": 0,
+            "cached_tokens": 0,
+            "total_tokens": 0,
+            "native_cost": None,
+        },
+    )
+    usage_bucket["input_tokens"] = safe_non_negative_int(usage_bucket.get("input_tokens")) + input_tokens
+    usage_bucket["output_tokens"] = safe_non_negative_int(usage_bucket.get("output_tokens")) + output_tokens
+    usage_bucket["cache_read_tokens"] = safe_non_negative_int(usage_bucket.get("cache_read_tokens")) + cache_read_tokens
+    usage_bucket["cache_write_tokens"] = safe_non_negative_int(usage_bucket.get("cache_write_tokens")) + cache_write_tokens
+    usage_bucket["cached_tokens"] = safe_non_negative_int(usage_bucket.get("cached_tokens")) + cached_tokens
+    usage_bucket["total_tokens"] = safe_non_negative_int(usage_bucket.get("total_tokens")) + total_tokens
+    usage_bucket["native_cost"] = merge_native_cost(
+        usage_bucket.get("native_cost") if isinstance(usage_bucket.get("native_cost"), dict) else None,
+        usage.get("cost"),
+    )
+
+    activity_bucket = activity_rows.get(usage_date)
+    if activity_bucket is None:
+        activity_rows[usage_date] = {"date": usage_date, "timestamp": local_timestamp}
+    else:
+        existing_timestamp = activity_bucket.get("timestamp")
+        if isinstance(existing_timestamp, dt.datetime):
+            activity_bucket["timestamp"] = min(existing_timestamp, local_timestamp)
+        else:
+            activity_bucket["timestamp"] = local_timestamp
+
+
+def parse_pi_session_contribution(
+    file_path: Path,
+    previous_contribution: dict[str, object] | None = None,
+    *,
+    start_offset: int = 0,
+) -> dict[str, object]:
+    contribution = (
+        clone_pi_contribution(previous_contribution, session_id=file_path.stem)
+        if start_offset > 0 and previous_contribution is not None
+        else empty_pi_contribution(file_path.stem)
+    )
+    contribution["session_id"] = normalized_bucket_value(contribution.get("session_id"), file_path.stem)
+    contribution["active_model"] = normalized_bucket_value(contribution.get("active_model"), DEFAULT_MODEL)
+
+    usage_rows = _pi_usage_rows_index(contribution)
+    activity_rows = _pi_activity_rows_index(contribution)
+    processed_offset = max(0, start_offset)
+
+    with file_path.open("rb") as handle:
+        if processed_offset:
+            handle.seek(processed_offset)
+        buffer = b""
+        while chunk := handle.read(1024 * 1024):
+            buffer += chunk
+            lines = buffer.split(b"\n")
+            buffer = lines.pop()
+            for raw_line in lines:
+                line = raw_line.decode("utf-8", errors="ignore").strip()
+                if not line:
+                    continue
+                try:
+                    event = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if isinstance(event, dict):
+                    apply_pi_event_to_contribution(contribution, event, usage_rows, activity_rows)
+
+        file_size = handle.tell()
+        processed_offset = file_size - len(buffer)
+        tail_line = buffer.decode("utf-8", errors="ignore").strip()
+        if tail_line:
             try:
-                event = json.loads(line)
+                event = json.loads(tail_line)
             except json.JSONDecodeError:
-                continue
-
-            event_type = event.get("type")
-            if event_type == "session":
-                event_session_id = event.get("id")
-                if isinstance(event_session_id, str) and event_session_id:
-                    session_id = event_session_id
-                continue
-
-            if event_type == "model_change":
-                active_model = normalized_bucket_value(event.get("modelId"), active_model)
-                continue
-
-            if event_type != "message":
-                continue
-
-            local_timestamp = parse_timestamp_local(event.get("timestamp"))
-            if local_timestamp is None:
-                continue
-
-            message = event.get("message") or {}
-            if not isinstance(message, dict) or message.get("role") != "assistant":
-                continue
-
-            usage = message.get("usage") or {}
-            if not isinstance(usage, dict):
-                continue
-
-            usage_date = local_timestamp.date().isoformat()
-            model = normalized_bucket_value(message.get("model"), active_model)
-            input_tokens = safe_non_negative_int(usage.get("input"))
-            output_tokens = safe_non_negative_int(usage.get("output"))
-            cache_read_tokens = safe_non_negative_int(usage.get("cacheRead"))
-            cache_write_tokens = safe_non_negative_int(usage.get("cacheWrite"))
-            cached_tokens = cache_read_tokens + cache_write_tokens
-            total_tokens = safe_non_negative_int(usage.get("totalTokens"))
-            if total_tokens == 0 and (input_tokens or output_tokens or cached_tokens):
-                total_tokens = input_tokens + output_tokens + cached_tokens
-
-            usage_bucket = usage_rows.setdefault(
-                (usage_date, model),
-                {
-                    "date": usage_date,
-                    "model": model,
-                    "input_tokens": 0,
-                    "output_tokens": 0,
-                    "cache_read_tokens": 0,
-                    "cache_write_tokens": 0,
-                    "cached_tokens": 0,
-                    "total_tokens": 0,
-                    "native_cost": None,
-                },
-            )
-            usage_bucket["input_tokens"] = safe_non_negative_int(usage_bucket.get("input_tokens")) + input_tokens
-            usage_bucket["output_tokens"] = safe_non_negative_int(usage_bucket.get("output_tokens")) + output_tokens
-            usage_bucket["cache_read_tokens"] = safe_non_negative_int(usage_bucket.get("cache_read_tokens")) + cache_read_tokens
-            usage_bucket["cache_write_tokens"] = safe_non_negative_int(usage_bucket.get("cache_write_tokens")) + cache_write_tokens
-            usage_bucket["cached_tokens"] = safe_non_negative_int(usage_bucket.get("cached_tokens")) + cached_tokens
-            usage_bucket["total_tokens"] = safe_non_negative_int(usage_bucket.get("total_tokens")) + total_tokens
-            usage_bucket["native_cost"] = merge_native_cost(
-                usage_bucket.get("native_cost") if isinstance(usage_bucket.get("native_cost"), dict) else None,
-                usage.get("cost"),
-            )
-
-            activity_bucket = activity_rows.get(usage_date)
-            if activity_bucket is None:
-                activity_rows[usage_date] = {"date": usage_date, "timestamp": local_timestamp}
+                pass
             else:
-                existing_timestamp = activity_bucket.get("timestamp")
-                if isinstance(existing_timestamp, dt.datetime):
-                    activity_bucket["timestamp"] = min(existing_timestamp, local_timestamp)
-                else:
-                    activity_bucket["timestamp"] = local_timestamp
+                if isinstance(event, dict):
+                    apply_pi_event_to_contribution(contribution, event, usage_rows, activity_rows)
+                    processed_offset = file_size
 
-    return {
-        "session_id": session_id,
-        "usage_rows": sorted(usage_rows.values(), key=lambda row: (str(row["date"]), str(row["model"]))),
-        "activity_rows": sorted(activity_rows.values(), key=lambda row: str(row["date"])),
-    }
+    contribution["usage_rows"] = sorted(usage_rows.values(), key=lambda row: (str(row["date"]), str(row["model"])))
+    contribution["activity_rows"] = sorted(activity_rows.values(), key=lambda row: str(row["date"]))
+    contribution["offset"] = processed_offset
+    update_pi_contribution_signatures(file_path, contribution)
+    return contribution
+
+
+def can_resume_pi_contribution(file_path: Path, current_size: int, cached_size: int, contribution: dict[str, object]) -> bool:
+    processed_offset = safe_non_negative_int(contribution.get("offset"))
+    if current_size <= cached_size or processed_offset <= 0:
+        return False
+    if processed_offset > cached_size or processed_offset > current_size:
+        return False
+
+    head_end = min(processed_offset, _PI_APPEND_FAST_PATH_WINDOW_BYTES)
+    if normalized_bucket_value(contribution.get("head_signature"), "") != _read_file_signature_window(file_path, 0, head_end):
+        return False
+
+    boundary_start = max(0, processed_offset - _PI_APPEND_FAST_PATH_WINDOW_BYTES)
+    return normalized_bucket_value(contribution.get("boundary_signature"), "") == _read_file_signature_window(
+        file_path,
+        boundary_start,
+        processed_offset,
+    )
 
 
 def parse_pi_session_contribution_cached(file_path: Path) -> dict[str, object]:
     try:
         stat = file_path.stat()
     except OSError:
-        return {"session_id": file_path.stem, "usage_rows": [], "activity_rows": []}
+        return empty_pi_contribution(file_path.stem)
 
     cache_key = str(file_path)
     cached = _PI_SESSION_RECORDS_CACHE.get(cache_key)
     signature = (stat.st_size, stat.st_mtime_ns)
     if cached is not None and cached[:2] == signature:
         contribution = cached[2]
-        return contribution if isinstance(contribution, dict) else {"session_id": file_path.stem, "usage_rows": [], "activity_rows": []}
+        return contribution if isinstance(contribution, dict) else empty_pi_contribution(file_path.stem)
 
-    contribution = parse_pi_session_contribution(file_path)
+    if cached is not None and isinstance(cached[2], dict) and can_resume_pi_contribution(file_path, stat.st_size, cached[0], cached[2]):
+        contribution = parse_pi_session_contribution(file_path, cached[2], start_offset=safe_non_negative_int(cached[2].get("offset")))
+    else:
+        contribution = parse_pi_session_contribution(file_path)
+
     _PI_SESSION_RECORDS_CACHE[cache_key] = (signature[0], signature[1], contribution)
     _mark_persistent_cache_dirty()
     return contribution
