@@ -88,13 +88,13 @@ def build_stats_sections(
     prev2_week_total: int,
 ) -> tuple[str, str]:
     fixed_stats_section = f"""    <section id="fixedStats" class="stats stats-fixed">
-      <div class="stat-group stat-group--pulse">
+      <div class="stat-group stat-group--pulse-history">
         <div class="stat-group__header">
-          <div class="stat-group__eyebrow">Live Pulse</div>
-          <div class="stat-group__hint">Current movement</div>
+          <div class="stat-group__eyebrow">Token Usage · Current + History</div>
+          <div class="stat-group__hint">Latest movement and weekly comparison</div>
         </div>
         <div class="stat-group__grid">
-          <article class="stat stat--signal">
+          <article class="stat stat--signal stat--executive stat--today">
             <div class="label">Today</div>
             <div class="value">{format_number(today_total)}</div>
           </article>
@@ -102,14 +102,6 @@ def build_stats_sections(
             <div class="label">Current Week</div>
             <div class="value">{format_number(current_week_total)}</div>
           </article>
-        </div>
-      </div>
-      <div class="stat-group stat-group--history">
-        <div class="stat-group__header">
-          <div class="stat-group__eyebrow">Recent Cadence</div>
-          <div class="stat-group__hint">Weekly comparison</div>
-        </div>
-        <div class="stat-group__grid">
           <article class="stat stat--history">
             <div class="label">Previous Week</div>
             <div class="value">{format_number(prev_week_total)}</div>
@@ -126,10 +118,10 @@ def build_stats_sections(
       <div class="stat-group stat-group--overview">
         <div class="stat-group__header">
           <div class="stat-group__eyebrow">Range Snapshot</div>
-          <div class="stat-group__hint">Selected window</div>
+          <div class="stat-group__hint">Selected window overview</div>
         </div>
         <div class="stat-group__grid">
-          <article class="stat stat--overview">
+          <article class="stat stat--overview stat--executive stat--range-total">
             <div class="label">Total</div>
             <div class="value">{format_number(ytd_total)}</div>
           </article>
