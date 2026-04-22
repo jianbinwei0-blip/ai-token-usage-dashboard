@@ -17,6 +17,7 @@ Supports Codex, Claude, and PI Coding Agent.
 - Range-scoped breakdown table grouped by `Agent CLI` + `Model`, including cost totals
 - Horizontal bar chart (with rank, total tokens, and session count) above the table
 - Auto-recalc on browser refresh and every 5 minutes via local `localhost` endpoint
+- Compact tmux status rendering for WTD/Today/cost pulse via `scripts/render_tmux_status.py`, aligned to 5-minute refresh boundaries
 
 ## Project Structure
 
@@ -28,6 +29,8 @@ Supports Codex, Claude, and PI Coding Agent.
 - `scripts/dashboard_core/render.py`: HTML rewrite + dataset injection
 - `scripts/dashboard_core/pipeline.py`: End-to-end recalc orchestration
 - `scripts/dashboard_core/pricing.py`: Built-in rate card + optional pricing override loader
+- `scripts/dashboard_core/tmux_status.py`: Compact status snapshot + string formatting helpers for tmux
+- `scripts/render_tmux_status.py`: Cache-aware tmux status renderer that refreshes dashboard data on demand
 - `scripts/run_local.sh`: Convenience launcher for local development
 - `scripts/tests/test_harness_contracts.py`: Deterministic pipeline/harness invariants
 - `launchd/*.plist.example`: Optional macOS LaunchAgent template
@@ -74,6 +77,41 @@ Environment variables:
 - `AI_USAGE_DASHBOARD_HTML` (default via `scripts/run_local.sh`: `<repo>/tmp/index.runtime.html`, seeded from `<repo>/dashboard/index.html`)
 - `AI_USAGE_PRICING_FILE` (optional JSON rate-card override file merged over the built-in pricing table)
 - `AI_USAGE_RECALC_LOG_FILE` (optional JSONL file for persistent `/recalc` timing/error logs; default: `<repo>/tmp/recalc_timings.jsonl`)
+
+## Tmux Status Line
+
+You can surface a compact AI usage pulse directly in tmux.
+
+Current compact format:
+
+```text
+AI ok · T 13.8M · WTD 706.3M · $227 · 08:50→08:55
+```
+
+Where the trailing time window means:
+- left time = last successful refresh time
+- right time = next aligned 5-minute refresh boundary
+
+### How it works
+
+- tmux redraws the status every few seconds
+- `scripts/render_tmux_status.py` only recalculates when crossing a 5-minute boundary (`:00`, `:05`, `:10`, ...)
+- the status renderer caches the last snapshot in `tmp/tmux_status.json`
+- if no provider roots are available, it falls back to `AI unavailable`
+
+### Toggle in tmux
+
+The tmux config supports enabling/disabling the AI segment with a user option and key binding:
+
+- `set -g @ai_token_usage_status 1` → enabled
+- `set -g @ai_token_usage_status 0` → disabled
+- `Prefix + A` toggles it live
+
+Example command to preview the segment outside tmux:
+
+```bash
+python3 scripts/render_tmux_status.py --refresh-interval-minutes 5 --max-width 96
+```
 
 ## Optional: Run as LaunchAgent (macOS)
 

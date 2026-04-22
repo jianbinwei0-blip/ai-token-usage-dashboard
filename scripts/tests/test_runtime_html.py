@@ -50,6 +50,13 @@ class RuntimeHtmlTests(unittest.TestCase):
         self.assertNotIn("Auto-recalc", html)
         self.assertNotIn("Auto-refresh", html)
         self.assertIn("Auto refresh: waiting for refresh", html)
+        self.assertIn('class="hero-shell"', html)
+        self.assertIn('id="heroProviderSummary"', html)
+        self.assertIn('id="heroCoverageSummary"', html)
+        self.assertIn('id="heroPricingSummary"', html)
+        self.assertIn('id="heroGeneratedSummary"', html)
+        self.assertIn('id="heroTimezoneSummary"', html)
+        self.assertIn('Sources: ~/.codex/sessions + ~/.claude/projects + ~/.pi/agent/sessions', html)
         self.assertRegex(
             html,
             r"\.meta-row--refresh \.chip \{\s*flex: 0 0 auto;\s*max-width: none;\s*white-space: nowrap;\s*overflow: visible;\s*text-overflow: clip;",

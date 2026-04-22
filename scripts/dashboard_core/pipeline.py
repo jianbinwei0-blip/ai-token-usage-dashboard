@@ -52,7 +52,12 @@ def write_dashboard_html(path: Path, html: str) -> None:
     _HTML_CACHE[cache_key] = (path.stat().st_mtime_ns, html)
 
 
-def recalc_dashboard(config: DashboardConfig, now: dt.datetime | None = None) -> dict:
+def recalc_dashboard(
+    config: DashboardConfig,
+    now: dt.datetime | None = None,
+    *,
+    include_dataset: bool = False,
+) -> dict:
     timings_ms: dict[str, float] = {}
     total_started = time.perf_counter()
 
@@ -284,4 +289,6 @@ def recalc_dashboard(config: DashboardConfig, now: dt.datetime | None = None) ->
     }
     if now is None:
         payload["timings_ms"] = {key: round(value, 3) for key, value in timings_ms.items()}
+    if include_dataset:
+        payload["dataset"] = dataset_payload
     return payload
