@@ -103,10 +103,14 @@ class TmuxStatusTests(unittest.TestCase):
             "AI partial · T 90.2M · WTD 562.4M · $13.4k* · 15:04 → 15:05",
         )
 
+        borderline_snapshot = {**base_snapshot, "generated_at": "2026-04-21T15:00:00+00:00"}
+        self.assertEqual(effective_health(borderline_snapshot, now=now), "ok")
+
+        stale_now = dt.datetime(2026, 4, 21, 15, 11, tzinfo=dt.timezone.utc)
         stale_snapshot = {**base_snapshot, "generated_at": "2026-04-21T15:00:00+00:00"}
-        self.assertEqual(effective_health(stale_snapshot, now=now), "stale")
+        self.assertEqual(effective_health(stale_snapshot, now=stale_now), "stale")
         self.assertEqual(
-            render_tmux_status(stale_snapshot, now=now),
+            render_tmux_status(stale_snapshot, now=stale_now),
             "AI stale · T 90.2M · WTD 562.4M · $13.4k · 15:00 → 15:05",
         )
 

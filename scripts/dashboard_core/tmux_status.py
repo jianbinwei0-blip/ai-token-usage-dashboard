@@ -326,7 +326,13 @@ def format_next_refresh_time(
     return next_boundary.strftime("%H:%M")
 
 
-def effective_health(snapshot: Snapshot, now: dt.datetime | None = None, *, stale_after_seconds: int = 120) -> str:
+def effective_health(
+    snapshot: Snapshot,
+    now: dt.datetime | None = None,
+    *,
+    refresh_interval_minutes: int = 5,
+    grace_seconds: int = 30,
+) -> str:
     base = str(snapshot.get("health") or "error").strip().lower()
     if base == "error":
         return "error"
@@ -339,6 +345,7 @@ def effective_health(snapshot: Snapshot, now: dt.datetime | None = None, *, stal
     if generated is None:
         return "error"
     age_seconds = (_to_utc(now) - generated).total_seconds()
+    stale_after_seconds = max(60, refresh_interval_minutes * 60 + grace_seconds)
     if age_seconds > stale_after_seconds:
         return "stale"
     return "ok"
@@ -397,7 +404,7 @@ def render_tmux_status(
         cost = f"{cost}*"
     refreshed_at = format_refresh_time(snapshot.get("generated_at"), now)
     next_refresh_at = format_next_refresh_time(snapshot.get("generated_at"), interval_minutes=refresh_interval_minutes, now=now)
-    status = effective_health(snapshot, now)
+    status = effective_health(snapshot, now, refresh_interval_minutes=refresh_interval_minutes)
 
     lead_plain = f"AI {status}" if not (scope and scope != "combined") else f"AI {scope} {status}"
 
