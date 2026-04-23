@@ -165,8 +165,8 @@ def build_tmux_status_snapshot(
 ) -> Snapshot:
     generated_at_text = str(dataset_payload.get("generated_at") or "")
     generated_at = parse_iso_datetime(generated_at_text) or _to_utc(now)
-    reference_now = _to_utc(now)
-    today = generated_at.astimezone(reference_now.tzinfo).date()
+    local_reference = now.astimezone() if now is not None else dt.datetime.now().astimezone()
+    today = generated_at.astimezone(local_reference.tzinfo).date() if local_reference.tzinfo else generated_at.astimezone().date()
 
     providers_payload = dataset_payload.get("providers") or {}
     if scope not in {"combined", "codex", "claude", "pi"}:

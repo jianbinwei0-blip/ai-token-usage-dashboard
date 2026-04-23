@@ -107,7 +107,7 @@ def snapshot_is_fresh(snapshot: dict | None, *, scope: str, range_preset: str, r
 def effective_now():
     import datetime as dt
 
-    return dt.datetime.now(dt.timezone.utc)
+    return dt.datetime.now().astimezone()
 
 
 def refresh_snapshot(config: DashboardConfig, scope: str, range_preset: str) -> dict:

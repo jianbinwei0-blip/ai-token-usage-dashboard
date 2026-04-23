@@ -71,6 +71,32 @@ class TmuxStatusTests(unittest.TestCase):
         self.assertEqual(snapshot["quality"]["warning_count"], 1)
         self.assertFalse(snapshot["quality"]["pricing_complete"])
 
+    def test_build_snapshot_uses_local_day_not_utc_day(self) -> None:
+        pacific = dt.timezone(dt.timedelta(hours=-7))
+        dataset_payload = {
+            "generated_at": "2026-04-23T02:55:00+00:00",
+            "providers_available": {"codex": True, "claude": False, "pi": False, "combined": True},
+            "pricing": {"source": "built-in", "version": "2026-03-08", "warnings": []},
+            "providers": {
+                "combined": {
+                    "rows": [
+                        {"date": "2026-04-22", "total_tokens": 123_456, "total_cost_usd": 7.5, "cost_complete": True},
+                    ]
+                }
+            },
+        }
+
+        snapshot = build_tmux_status_snapshot(
+            dataset_payload,
+            {"total": 12.0},
+            scope="combined",
+            range_preset="wtd",
+            now=dt.datetime(2026, 4, 22, 20, 0, tzinfo=pacific),
+        )
+
+        self.assertEqual(snapshot["metrics"]["today_tokens"], 123_456)
+        self.assertEqual(snapshot["range"]["to"], "2026-04-22")
+
     def test_render_variants(self) -> None:
         now = dt.datetime(2026, 4, 21, 15, 5, tzinfo=dt.timezone.utc)
         base_snapshot = {
