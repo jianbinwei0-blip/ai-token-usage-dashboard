@@ -116,7 +116,7 @@ class TmuxStatusTests(unittest.TestCase):
 
         self.assertEqual(
             render_tmux_status(base_snapshot, now=now),
-            "AI ok · T 90.2M · WTD 562.4M · $13.4k · 15:04 → 15:05",
+            "AI ok · T 90.2M · WTD 562.4M · WTD $13.4k · 15:04 → 15:05",
         )
 
         partial_snapshot = {
@@ -126,7 +126,7 @@ class TmuxStatusTests(unittest.TestCase):
         }
         self.assertEqual(
             render_tmux_status(partial_snapshot, now=now),
-            "AI partial · T 90.2M · WTD 562.4M · $13.4k* · 15:04 → 15:05",
+            "AI partial · T 90.2M · WTD 562.4M · WTD $13.4k* · 15:04 → 15:05",
         )
 
         borderline_snapshot = {**base_snapshot, "generated_at": "2026-04-21T15:00:00+00:00"}
@@ -137,7 +137,7 @@ class TmuxStatusTests(unittest.TestCase):
         self.assertEqual(effective_health(stale_snapshot, now=stale_now), "stale")
         self.assertEqual(
             render_tmux_status(stale_snapshot, now=stale_now),
-            "AI stale · T 90.2M · WTD 562.4M · $13.4k · 15:00 → 15:05",
+            "AI stale · T 90.2M · WTD 562.4M · WTD $13.4k · 15:00 → 15:05",
         )
 
         error_snapshot = {**base_snapshot, "health": "error"}
@@ -147,7 +147,7 @@ class TmuxStatusTests(unittest.TestCase):
         self.assertIn("#[fg=#7EE787,bold]ok#[default]", styled)
         self.assertIn("#[fg=#E6EDF3,bold]90.2M#[default]", styled)
         self.assertIn("#[fg=#79C0FF,bold]562.4M#[default]", styled)
-        self.assertIn("#[fg=#7EE787,bold]$13.4k#[default]", styled)
+        self.assertIn("#[fg=#8B949E]WTD#[default] #[fg=#7EE787,bold]$13.4k#[default]", styled)
         self.assertIn("#[fg=#E6EDF3]15:04#[default]", styled)
         self.assertIn("#[fg=#79C0FF]15:05#[default]", styled)
         unavailable = render_tmux_status({"providers": []}, use_tmux_style=True)

@@ -402,6 +402,7 @@ def render_tmux_status(
     cost = format_usd_short(metrics.get("range_cost_usd"))
     if not bool(quality.get("pricing_complete", True)) and cost != "cost?":
         cost = f"{cost}*"
+    range_cost = f"{range_short} {cost}"
     refreshed_at = format_refresh_time(snapshot.get("generated_at"), now)
     next_refresh_at = format_next_refresh_time(snapshot.get("generated_at"), interval_minutes=refresh_interval_minutes, now=now)
     status = effective_health(snapshot, now, refresh_interval_minutes=refresh_interval_minutes)
@@ -412,7 +413,7 @@ def render_tmux_status(
         plain = join_plain([lead_plain, f"{refreshed_at} → {next_refresh_at}"])
         variant = "error_cached"
     else:
-        full = join_plain([lead_plain, f"T {today_tokens}", f"{range_short} {range_tokens}", cost, f"{refreshed_at} → {next_refresh_at}"])
+        full = join_plain([lead_plain, f"T {today_tokens}", f"{range_short} {range_tokens}", range_cost, f"{refreshed_at} → {next_refresh_at}"])
         compact = join_plain([lead_plain, f"T {today_tokens}", f"{range_short} {range_tokens}", f"{refreshed_at} → {next_refresh_at}"])
         minimum = join_plain([lead_plain, f"{range_short} {range_tokens}"])
 
@@ -443,7 +444,7 @@ def render_tmux_status(
 
     today_segment = tmux_style("T", fg=MUTED_COLOR) + " " + tmux_style(today_tokens, fg=TODAY_VALUE_COLOR, bold=True)
     range_segment = tmux_style(range_short, fg=MUTED_COLOR) + " " + tmux_style(range_tokens, fg=RANGE_VALUE_COLOR, bold=True)
-    cost_segment = tmux_style(cost, fg=health_color if cost.endswith("*") else COST_OK_COLOR, bold=True)
+    cost_segment = tmux_style(range_short, fg=MUTED_COLOR) + " " + tmux_style(cost, fg=health_color if cost.endswith("*") else COST_OK_COLOR, bold=True)
     time_segment = (
         tmux_style(refreshed_at, fg=TODAY_VALUE_COLOR)
         + tmux_style(" → ", fg=MUTED_COLOR)
