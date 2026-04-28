@@ -40,6 +40,7 @@ Primary files:
 3. Make UI changes in `dashboard/index.html`.
 4. Make aggregation/range logic changes in `scripts/ai_usage_recalc_server.py` only when server-side totals must change.
 5. Validate with:
+   - `python3 -m unittest discover -s scripts/tests` passes
    - `curl -s http://127.0.0.1:8765/recalc` returns JSON containing `"ok": true`
    - Dashboard reflects requested UI/number updates after refresh.
 
