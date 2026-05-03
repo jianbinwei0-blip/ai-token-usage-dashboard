@@ -40,10 +40,42 @@ class TmuxStatusTests(unittest.TestCase):
             "providers": {
                 "combined": {
                     "rows": [
-                        {"date": "2026-04-21", "total_tokens": 90_189_559, "total_cost_usd": 120.0, "cost_complete": True},
-                        {"date": "2026-04-20", "total_tokens": 200_000_000, "total_cost_usd": 300.0, "cost_complete": True},
-                        {"date": "2026-04-19", "total_tokens": 272_192_805, "total_cost_usd": 412.0, "cost_complete": True},
-                        {"date": "2026-04-12", "total_tokens": 999, "total_cost_usd": 1.0, "cost_complete": True},
+                        {
+                            "date": "2026-04-21",
+                            "input_tokens": 40_000_000,
+                            "output_tokens": 10_000_000,
+                            "cached_tokens": 40_189_559,
+                            "total_tokens": 90_189_559,
+                            "total_cost_usd": 120.0,
+                            "cost_complete": True,
+                        },
+                        {
+                            "date": "2026-04-20",
+                            "input_tokens": 100_000_000,
+                            "output_tokens": 20_000_000,
+                            "cached_tokens": 80_000_000,
+                            "total_tokens": 200_000_000,
+                            "total_cost_usd": 300.0,
+                            "cost_complete": True,
+                        },
+                        {
+                            "date": "2026-04-19",
+                            "input_tokens": 150_000_000,
+                            "output_tokens": 22_192_805,
+                            "cached_tokens": 100_000_000,
+                            "total_tokens": 272_192_805,
+                            "total_cost_usd": 412.0,
+                            "cost_complete": True,
+                        },
+                        {
+                            "date": "2026-04-12",
+                            "input_tokens": 333,
+                            "output_tokens": 333,
+                            "cached_tokens": 333,
+                            "total_tokens": 999,
+                            "total_cost_usd": 1.0,
+                            "cost_complete": True,
+                        },
                     ]
                 },
                 "claude": {
@@ -65,8 +97,15 @@ class TmuxStatusTests(unittest.TestCase):
         self.assertEqual(snapshot["health"], "partial")
         self.assertEqual(snapshot["providers"], ["codex", "claude", "pi"])
         self.assertEqual(snapshot["range"]["preset"], "wtd")
+        self.assertEqual(snapshot["version"], 2)
         self.assertEqual(snapshot["metrics"]["today_tokens"], 90_189_559)
+        self.assertEqual(snapshot["metrics"]["today_input_tokens"], 40_000_000)
+        self.assertEqual(snapshot["metrics"]["today_output_tokens"], 10_000_000)
+        self.assertEqual(snapshot["metrics"]["today_cached_tokens"], 40_189_559)
         self.assertEqual(snapshot["metrics"]["range_tokens"], 290_189_559)
+        self.assertEqual(snapshot["metrics"]["range_input_tokens"], 140_000_000)
+        self.assertEqual(snapshot["metrics"]["range_output_tokens"], 30_000_000)
+        self.assertEqual(snapshot["metrics"]["range_cached_tokens"], 120_189_559)
         self.assertAlmostEqual(snapshot["metrics"]["range_cost_usd"], 420.0)
         self.assertEqual(snapshot["quality"]["warning_count"], 1)
         self.assertFalse(snapshot["quality"]["pricing_complete"])
@@ -80,7 +119,15 @@ class TmuxStatusTests(unittest.TestCase):
             "providers": {
                 "combined": {
                     "rows": [
-                        {"date": "2026-04-22", "total_tokens": 123_456, "total_cost_usd": 7.5, "cost_complete": True},
+                        {
+                            "date": "2026-04-22",
+                            "input_tokens": 100_000,
+                            "output_tokens": 20_000,
+                            "cached_tokens": 3_456,
+                            "total_tokens": 123_456,
+                            "total_cost_usd": 7.5,
+                            "cost_complete": True,
+                        },
                     ]
                 }
             },
@@ -107,7 +154,13 @@ class TmuxStatusTests(unittest.TestCase):
             "range": {"preset": "wtd"},
             "metrics": {
                 "today_tokens": 90_189_559,
+                "today_input_tokens": 40_000_000,
+                "today_output_tokens": 10_000_000,
+                "today_cached_tokens": 40_189_559,
                 "range_tokens": 562_382_364,
+                "range_input_tokens": 250_000_000,
+                "range_output_tokens": 62_382_364,
+                "range_cached_tokens": 250_000_000,
                 "range_cost_usd": 13_425.03,
                 "recalc_ms": 68.4,
             },
@@ -116,7 +169,7 @@ class TmuxStatusTests(unittest.TestCase):
 
         self.assertEqual(
             render_tmux_status(base_snapshot, now=now),
-            "AI ok · T 90.2M · WTD 562.4M · WTD $13.4k · 15:04 → 15:05",
+            "AI ok · T I 40M O 10M Σ 90.2M · WTD I 250M O 62.4M Σ 562.4M · WTD $13.4k · 15:04 → 15:05",
         )
 
         partial_snapshot = {
@@ -126,7 +179,7 @@ class TmuxStatusTests(unittest.TestCase):
         }
         self.assertEqual(
             render_tmux_status(partial_snapshot, now=now),
-            "AI partial · T 90.2M · WTD 562.4M · WTD $13.4k* · 15:04 → 15:05",
+            "AI partial · T I 40M O 10M Σ 90.2M · WTD I 250M O 62.4M Σ 562.4M · WTD $13.4k* · 15:04 → 15:05",
         )
 
         borderline_snapshot = {**base_snapshot, "generated_at": "2026-04-21T15:00:00+00:00"}
@@ -137,7 +190,7 @@ class TmuxStatusTests(unittest.TestCase):
         self.assertEqual(effective_health(stale_snapshot, now=stale_now), "stale")
         self.assertEqual(
             render_tmux_status(stale_snapshot, now=stale_now),
-            "AI stale · T 90.2M · WTD 562.4M · WTD $13.4k · 15:00 → 15:05",
+            "AI stale · T I 40M O 10M Σ 90.2M · WTD I 250M O 62.4M Σ 562.4M · WTD $13.4k · 15:00 → 15:05",
         )
 
         error_snapshot = {**base_snapshot, "health": "error"}
@@ -145,8 +198,12 @@ class TmuxStatusTests(unittest.TestCase):
         styled = render_tmux_status(base_snapshot, now=now, use_tmux_style=True)
         self.assertIn("#[fg=#58A6FF,bold]AI#[default]", styled)
         self.assertIn("#[fg=#7EE787,bold]ok#[default]", styled)
-        self.assertIn("#[fg=#E6EDF3,bold]90.2M#[default]", styled)
-        self.assertIn("#[fg=#79C0FF,bold]562.4M#[default]", styled)
+        self.assertIn("#[fg=#E6EDF3,bold]40M#[default]", styled)
+        self.assertIn("#[fg=#E6EDF3,bold]10M#[default]", styled)
+        self.assertIn("#[fg=#1F2328,bg=#F2CC60,bold]90.2M#[default]", styled)
+        self.assertIn("#[fg=#79C0FF,bold]250M#[default]", styled)
+        self.assertIn("#[fg=#79C0FF,bold]62.4M#[default]", styled)
+        self.assertIn("#[fg=#1F2328,bg=#F2CC60,bold]562.4M#[default]", styled)
         self.assertIn("#[fg=#8B949E]WTD#[default] #[fg=#7EE787,bold]$13.4k#[default]", styled)
         self.assertIn("#[fg=#E6EDF3]15:04#[default]", styled)
         self.assertIn("#[fg=#79C0FF]15:05#[default]", styled)

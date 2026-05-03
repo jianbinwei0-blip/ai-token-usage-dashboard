@@ -2010,8 +2010,8 @@
             <div class="value">24,329,818</div>
           </article>
           <article class="stat stat--tokens">
-            <div class="label">Cached</div>
-            <div class="value">5,064,767,652</div>
+            <div class="label">Total</div>
+            <div class="value">5,371,446,165</div>
           </article>
         </div>
       </div>
@@ -2329,7 +2329,7 @@
     const statRangeDailyAvg = rangeStatCards[6] ?? null;
     const statRangeInputTokens = rangeStatCards[7] ?? null;
     const statRangeOutputTokens = rangeStatCards[8] ?? null;
-    const statRangeCachedTokens = rangeStatCards[9] ?? null;
+    const statRangeTotalTokens = rangeStatCards[9] ?? null;
     const statRangeMonthlyAvgCost = rangeStatCards[10] ?? null;
     const statRangeWeeklyAvgCost = rangeStatCards[11] ?? null;
     const statRangeDailyAvgCost = rangeStatCards[12] ?? null;
@@ -3311,7 +3311,7 @@
         updateCard(statRangeDailyAvg, "Daily Tokens", "0");
         updateCard(statRangeInputTokens, "Input Tokens", "0");
         updateCard(statRangeOutputTokens, "Output Tokens", "0");
-        updateCard(statRangeCachedTokens, "Cached Tokens", "0");
+        updateCard(statRangeTotalTokens, "Total Tokens", "0");
         updateCard(statRangeMonthlyAvgCost, "Monthly Spend", "$0.0000");
         updateCard(statRangeWeeklyAvgCost, "Weekly Spend", "$0.0000");
         updateCard(statRangeDailyAvgCost, "Daily Spend", "$0.0000");
@@ -3341,7 +3341,7 @@
       updateCard(statRangeDailyAvg, "Daily Tokens", rangeDailyAvgTokens);
       updateCard(statRangeInputTokens, "Input Tokens", formatNumber(rangeTotals.input));
       updateCard(statRangeOutputTokens, "Output Tokens", formatNumber(rangeTotals.output));
-      updateCard(statRangeCachedTokens, "Cached Tokens", formatNumber(rangeTotals.cached));
+      updateCard(statRangeTotalTokens, "Total Tokens", formatNumber(rangeTotals.total));
       updateCard(statRangeMonthlyAvgCost, "Monthly Spend", rangeMonthlyAvgCost);
       updateCard(statRangeWeeklyAvgCost, "Weekly Spend", rangeWeeklyAvgCost);
       updateCard(statRangeDailyAvgCost, "Daily Spend", rangeDailyAvgCost);

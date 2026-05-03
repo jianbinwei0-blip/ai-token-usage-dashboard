@@ -174,8 +174,8 @@ def build_stats_sections(
             <div class="value">{format_number(output_total)}</div>
           </article>
           <article class="stat stat--tokens">
-            <div class="label">Cached</div>
-            <div class="value">{format_number(cached_total)}</div>
+            <div class="label">Total</div>
+            <div class="value">{format_number(ytd_total)}</div>
           </article>
         </div>
       </div>

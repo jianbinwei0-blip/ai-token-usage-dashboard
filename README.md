@@ -10,14 +10,14 @@ Supports Codex, Claude, and PI Coding Agent.
 ## Features
 
 - Provider toggle filtered to providers present on the system (`Combined`, `Codex`, `Claude`, `PI`)
-- Range-aware stats cards for total, days, sessions, highest day, explicit input/output/cached token totals, and cost totals
+- Range-aware stats cards for total, days, sessions, highest day, explicit input/output/total token totals, and cost totals
 - Today + calendar-week rollups
 - Activity Rhythm heatmap + time-of-day summary for the selected provider and date range
 - Daily breakdown table with sessions, input, output, cached, total token, and total cost columns
 - Range-scoped breakdown table grouped by `Agent CLI` + `Model`, including cost totals
 - Horizontal bar chart (with rank, total tokens, and session count) above the table
 - Auto-recalc on browser refresh and every 5 minutes via local `localhost` endpoint
-- Compact tmux status rendering for WTD/Today/cost pulse via `scripts/render_tmux_status.py`, aligned to 5-minute refresh boundaries
+- Compact tmux status rendering for Today/WTD input, output, total-token, and cost pulse via `scripts/render_tmux_status.py`, aligned to 5-minute refresh boundaries
 
 ## Project Structure
 
@@ -85,12 +85,14 @@ You can surface a compact AI usage pulse directly in tmux.
 Current compact format:
 
 ```text
-AI ok · T 13.8M · WTD 706.3M · $227 · 08:50→08:55
+AI ok · T I 4.2M O 1.1M Σ 5.3M · WTD I 210.3M O 37.4M Σ 247.7M · WTD $227 · 08:50→08:55
 ```
 
-Where the trailing time window means:
-- left time = last successful refresh time
-- right time = next aligned 5-minute refresh boundary
+Where:
+- `T` = today, `WTD` = week to date
+- `I`/`O`/`Σ` = input, output, and total tokens
+- trailing left time = last successful refresh time
+- trailing right time = next aligned 5-minute refresh boundary
 
 ### How it works
 

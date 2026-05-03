@@ -20,6 +20,8 @@ SCOPE_COLOR = "#A5D6FF"
 MUTED_COLOR = "#8B949E"
 TODAY_VALUE_COLOR = "#E6EDF3"
 RANGE_VALUE_COLOR = "#79C0FF"
+TOTAL_TOKEN_HIGHLIGHT_FG = "#1F2328"
+TOTAL_TOKEN_HIGHLIGHT_BG = "#F2CC60"
 COST_OK_COLOR = "#7EE787"
 UNAVAILABLE_COLOR = "#F2CC60"
 
@@ -132,23 +134,45 @@ def filter_pricing_warnings(pricing_metadata: dict[str, Any], scope: str) -> lis
 
 def summary_for_rows(rows: list[dict[str, Any]], start_date: dt.date, end_date: dt.date) -> dict[str, Any]:
     today_tokens = 0
+    today_input_tokens = 0
+    today_output_tokens = 0
+    today_cached_tokens = 0
     range_tokens = 0
+    range_input_tokens = 0
+    range_output_tokens = 0
+    range_cached_tokens = 0
     range_cost_usd = 0.0
     pricing_complete = True
 
     for row in rows:
         row_date = parse_iso_date(row.get("date"), end_date)
+        input_tokens = int(row.get("input_tokens") or 0)
+        output_tokens = int(row.get("output_tokens") or 0)
+        cached_tokens = int(row.get("cached_tokens") or 0)
+        total_tokens = int(row.get("total_tokens") or 0)
         if row_date == end_date:
-            today_tokens += int(row.get("total_tokens") or 0)
+            today_tokens += total_tokens
+            today_input_tokens += input_tokens
+            today_output_tokens += output_tokens
+            today_cached_tokens += cached_tokens
         if not (start_date <= row_date <= end_date):
             continue
-        range_tokens += int(row.get("total_tokens") or 0)
+        range_tokens += total_tokens
+        range_input_tokens += input_tokens
+        range_output_tokens += output_tokens
+        range_cached_tokens += cached_tokens
         range_cost_usd += float(row.get("total_cost_usd") or 0.0)
         pricing_complete = pricing_complete and bool(row.get("cost_complete", True))
 
     return {
         "today_tokens": today_tokens,
+        "today_input_tokens": today_input_tokens,
+        "today_output_tokens": today_output_tokens,
+        "today_cached_tokens": today_cached_tokens,
         "range_tokens": range_tokens,
+        "range_input_tokens": range_input_tokens,
+        "range_output_tokens": range_output_tokens,
+        "range_cached_tokens": range_cached_tokens,
         "range_cost_usd": round(range_cost_usd, 9),
         "pricing_complete": pricing_complete,
     }
@@ -192,7 +216,7 @@ def build_tmux_status_snapshot(
         health = "ok"
 
     snapshot: Snapshot = {
-        "version": 1,
+        "version": 2,
         "generated_at": generated_at.isoformat(),
         "health": health,
         "scope": scope,
@@ -206,7 +230,13 @@ def build_tmux_status_snapshot(
         },
         "metrics": {
             "today_tokens": int(summary["today_tokens"]),
+            "today_input_tokens": int(summary["today_input_tokens"]),
+            "today_output_tokens": int(summary["today_output_tokens"]),
+            "today_cached_tokens": int(summary["today_cached_tokens"]),
             "range_tokens": int(summary["range_tokens"]),
+            "range_input_tokens": int(summary["range_input_tokens"]),
+            "range_output_tokens": int(summary["range_output_tokens"]),
+            "range_cached_tokens": int(summary["range_cached_tokens"]),
             "range_cost_usd": float(summary["range_cost_usd"]),
             "recalc_ms": float((timings_ms or {}).get("total") or 0.0),
         },
@@ -397,8 +427,15 @@ def render_tmux_status(
 
     range_preset = str((snapshot.get("range") or {}).get("preset") or "wtd").strip().lower()
     range_short = range_short_for_preset(range_preset)
-    today_tokens = format_tokens_short(metrics.get("today_tokens") or 0)
+    today_input_tokens = format_tokens_short(metrics.get("today_input_tokens") or 0)
+    today_output_tokens = format_tokens_short(metrics.get("today_output_tokens") or 0)
+    today_total_tokens = format_tokens_short(metrics.get("today_tokens") or 0)
     range_tokens = format_tokens_short(metrics.get("range_tokens") or 0)
+    range_input_tokens = format_tokens_short(metrics.get("range_input_tokens") or 0)
+    range_output_tokens = format_tokens_short(metrics.get("range_output_tokens") or 0)
+    range_total_tokens = range_tokens
+    today_breakdown = f"T I {today_input_tokens} O {today_output_tokens} Σ {today_total_tokens}"
+    range_breakdown = f"{range_short} I {range_input_tokens} O {range_output_tokens} Σ {range_total_tokens}"
     cost = format_usd_short(metrics.get("range_cost_usd"))
     if not bool(quality.get("pricing_complete", True)) and cost != "cost?":
         cost = f"{cost}*"
@@ -413,8 +450,9 @@ def render_tmux_status(
         plain = join_plain([lead_plain, f"{refreshed_at} → {next_refresh_at}"])
         variant = "error_cached"
     else:
-        full = join_plain([lead_plain, f"T {today_tokens}", f"{range_short} {range_tokens}", range_cost, f"{refreshed_at} → {next_refresh_at}"])
-        compact = join_plain([lead_plain, f"T {today_tokens}", f"{range_short} {range_tokens}", f"{refreshed_at} → {next_refresh_at}"])
+        full = join_plain([lead_plain, today_breakdown, range_breakdown, range_cost, f"{refreshed_at} → {next_refresh_at}"])
+        compact = join_plain([lead_plain, today_breakdown, range_breakdown, f"{refreshed_at} → {next_refresh_at}"])
+        short = join_plain([lead_plain, range_breakdown, f"{refreshed_at} → {next_refresh_at}"])
         minimum = join_plain([lead_plain, f"{range_short} {range_tokens}"])
 
         if max_width is None or len(full) <= max_width:
@@ -423,6 +461,9 @@ def render_tmux_status(
         elif len(compact) <= max_width:
             plain = compact
             variant = "compact"
+        elif len(short) <= max_width:
+            plain = short
+            variant = "short"
         elif len(minimum) <= max_width:
             plain = minimum
             variant = "minimum"
@@ -442,8 +483,46 @@ def render_tmux_status(
     else:
         lead_segment = ai_segment + " " + health_segment
 
-    today_segment = tmux_style("T", fg=MUTED_COLOR) + " " + tmux_style(today_tokens, fg=TODAY_VALUE_COLOR, bold=True)
-    range_segment = tmux_style(range_short, fg=MUTED_COLOR) + " " + tmux_style(range_tokens, fg=RANGE_VALUE_COLOR, bold=True)
+    today_segment = (
+        tmux_style("T", fg=MUTED_COLOR)
+        + " "
+        + tmux_style("I", fg=MUTED_COLOR)
+        + " "
+        + tmux_style(today_input_tokens, fg=TODAY_VALUE_COLOR, bold=True)
+        + " "
+        + tmux_style("O", fg=MUTED_COLOR)
+        + " "
+        + tmux_style(today_output_tokens, fg=TODAY_VALUE_COLOR, bold=True)
+        + " "
+        + tmux_style("Σ", fg=MUTED_COLOR)
+        + " "
+        + tmux_style(
+            today_total_tokens,
+            fg=TOTAL_TOKEN_HIGHLIGHT_FG,
+            bg=TOTAL_TOKEN_HIGHLIGHT_BG,
+            bold=True,
+        )
+    )
+    range_segment = (
+        tmux_style(range_short, fg=MUTED_COLOR)
+        + " "
+        + tmux_style("I", fg=MUTED_COLOR)
+        + " "
+        + tmux_style(range_input_tokens, fg=RANGE_VALUE_COLOR, bold=True)
+        + " "
+        + tmux_style("O", fg=MUTED_COLOR)
+        + " "
+        + tmux_style(range_output_tokens, fg=RANGE_VALUE_COLOR, bold=True)
+        + " "
+        + tmux_style("Σ", fg=MUTED_COLOR)
+        + " "
+        + tmux_style(
+            range_total_tokens,
+            fg=TOTAL_TOKEN_HIGHLIGHT_FG,
+            bg=TOTAL_TOKEN_HIGHLIGHT_BG,
+            bold=True,
+        )
+    )
     cost_segment = tmux_style(range_short, fg=MUTED_COLOR) + " " + tmux_style(cost, fg=health_color if cost.endswith("*") else COST_OK_COLOR, bold=True)
     time_segment = (
         tmux_style(refreshed_at, fg=TODAY_VALUE_COLOR)
@@ -457,6 +536,8 @@ def render_tmux_status(
         return join_styled([lead_segment, today_segment, range_segment, cost_segment, time_segment])
     if variant == "compact":
         return join_styled([lead_segment, today_segment, range_segment, time_segment])
+    if variant == "short":
+        return join_styled([lead_segment, range_segment, time_segment])
     return join_styled([lead_segment, range_segment])
 
 

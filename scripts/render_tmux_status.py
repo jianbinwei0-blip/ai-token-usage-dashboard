@@ -84,6 +84,8 @@ def snapshot_is_fresh(snapshot: dict | None, *, scope: str, range_preset: str, r
     generated_at = snapshot.get("generated_at")
     from dashboard_core.tmux_status import parse_iso_datetime
 
+    if int(snapshot.get("version") or 0) < 2:
+        return False
     if str(snapshot.get("scope") or "combined") != scope:
         return False
     cached_range = (snapshot.get("range") or {}).get("preset")
