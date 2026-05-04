@@ -1,0 +1,87 @@
+{
+  "skillId": "skill-investigation-and-plan-workflow",
+  "sourceSkillCandidateId": "skill-investigation-and-plan-workflow",
+  "skillName": "investigation-and-plan-workflow",
+  "description": "Trajectory-synthesized workflow for repeated investigation-and-plan tasks backed by 5 successful task(s).",
+  "trigger": "Use when a task in the investigation-and-plan family needs the repeated validation-backed workflow SEA observed in recent work.",
+  "preconditions": [
+    {
+      "text": "The task belongs to the investigation-and-plan family."
+    }
+  ],
+  "instructions": [
+    {
+      "text": "Restate the target files, constraints, and intended validation before editing investigation-and-plan work."
+    },
+    {
+      "text": "Keep the change set bounded while executing the main investigation-and-plan workflow."
+    },
+    {
+      "text": "Run the highest-signal validation and record an explicit closeout summary before finishing the task."
+    }
+  ],
+  "requiredTools": [],
+  "validationPlan": [
+    {
+      "description": "Run the highest-signal validation available for the task and summarize the result."
+    }
+  ],
+  "fallbackGuidance": [
+    "If the expected workflow no longer matches the task, summarize the mismatch and fall back to normal task-specific reasoning."
+  ],
+  "examples": [
+    {
+      "taskId": "task-mo08ncg5-h56z9e",
+      "reflectionId": "reflection-mon83bya-yeq4y5",
+      "summary": "Success on investigation-and-plan (D3) for goal: Debug localhost:8765 slow refresh. Validation was recorded. No corrective guidance was logged. 12 tool error(s) were recorded."
+    },
+    {
+      "taskId": "task-mo8s867f-lgj8ms",
+      "reflectionId": "reflection-mon83by0-op647b",
+      "summary": "Success on investigation-and-plan (D4) for goal: Refine dashboard UI layout. Validation was recorded. No corrective guidance was logged. 9 tool error(s) were recorded."
+    },
+    {
+      "taskId": "task-mo94je4t-fdndx6",
+      "reflectionId": "reflection-mon83bxr-rgjpt2",
+      "summary": "Success on investigation-and-plan (D1) for goal: why the pi process on this tmux pane 2.1 stucked. Validation was recorded. No corrective guidance was logged. 17 tool error(s) were recorded."
+    }
+  ],
+  "scope": {
+    "kind": "task-family",
+    "familyId": "investigation-and-plan"
+  },
+  "sourcePolicyIds": [],
+  "sourceLessonIds": [],
+  "sourceTaskIds": [
+    "task-mo08ncg5-h56z9e",
+    "task-mo8s867f-lgj8ms",
+    "task-mo94je4t-fdndx6",
+    "task-moitifir-9n3fgk",
+    "task-mojespb8-vgwhph"
+  ],
+  "sourceReflectionIds": [
+    "reflection-mon83bwx-s5k7qp",
+    "reflection-mon83bx7-cuxovy",
+    "reflection-mon83bxr-rgjpt2",
+    "reflection-mon83by0-op647b",
+    "reflection-mon83bya-yeq4y5"
+  ],
+  "sourceClusterIds": [
+    "skill-synthesis-investigation-and-plan"
+  ],
+  "status": "active",
+  "createdAt": "2026-05-03T22:31:38.976Z",
+  "updatedAt": "2026-05-03T22:31:38.976Z",
+  "materialization": {
+    "targetRoot": ".agents/generated-skills",
+    "activationMode": "generated-skill-directory",
+    "skillDirectory": ".agents/generated-skills/investigation-and-plan-workflow",
+    "skillFile": ".agents/generated-skills/investigation-and-plan-workflow/SKILL.md",
+    "manifestFile": ".agents/generated-skills/investigation-and-plan-workflow/skill.json"
+  },
+  "adoptionEvidence": {
+    "approvedAt": "2026-05-03T22:31:38.976Z",
+    "approvedBy": "sea-session-import",
+    "rationale": "SEA automatically approved and installed this learned skill for runtime use."
+  }
+}
