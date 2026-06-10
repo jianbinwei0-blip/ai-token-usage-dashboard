@@ -1589,6 +1589,55 @@
       -webkit-backdrop-filter: none;
     }
 
+    .attribution-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 1rem;
+      margin-top: 1rem;
+    }
+
+    .attribution-card {
+      display: grid;
+      gap: 0.7rem;
+      min-width: 0;
+    }
+
+    .attribution-card__title {
+      display: flex;
+      align-items: baseline;
+      justify-content: space-between;
+      gap: 0.75rem;
+      margin: 0;
+      font-size: 0.92rem;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: var(--text);
+    }
+
+    .attribution-card__hint {
+      font-size: 0.72rem;
+      color: var(--text-dim);
+      letter-spacing: 0;
+      text-transform: none;
+      font-weight: 500;
+    }
+
+    .attribution-card .table-wrap {
+      max-height: 18rem;
+    }
+
+    .attribution-share {
+      color: var(--accent-2);
+      font-variant-numeric: tabular-nums;
+      font-weight: 700;
+    }
+
+    @media (max-width: 980px) {
+      .attribution-grid {
+        grid-template-columns: 1fr;
+      }
+    }
+
     .table-wrap {
       overflow: auto;
       padding: 0;
@@ -1606,6 +1655,11 @@
       border-spacing: 0;
       min-width: 1360px;
       font-size: 0.88rem;
+    }
+
+    .attribution-card table {
+      min-width: 980px;
+      font-size: 0.82rem;
     }
 
     thead th {
@@ -2228,6 +2282,135 @@
 
     <section class="panel">
       <div class="usage-chart-head">
+        <h2 class="usage-chart-title">Context Attribution</h2>
+      </div>
+      <p id="usageAttributionSummary" class="foot">Claude-style breakdown for Skills, Agents/Subagents, MCP servers, Tools, and Plugins / Extensions when transcript events expose them.</p>
+      <div class="attribution-grid" aria-label="Token and cost attribution by Claude Code extension point">
+        <article class="attribution-card">
+          <h3 class="attribution-card__title">Skills <span class="attribution-card__hint">slash commands</span></h3>
+          <div class="table-wrap">
+            <table aria-label="Skill token and cost attribution table">
+              <thead>
+                <tr>
+                  <th>Rank</th>
+                  <th>Skill</th>
+                  <th class="num">Usage</th>
+                  <th class="num">Events</th>
+                  <th class="num">Sessions</th>
+                  <th class="num">Input</th>
+                  <th class="num">Output</th>
+                  <th class="num">Cached</th>
+                  <th class="num">Total Tokens</th>
+                  <th class="num">Total Cost</th>
+                </tr>
+              </thead>
+              <tbody id="attributionSkillsTableBody">
+                <tr><td colspan="10">No skill attribution available.</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </article>
+        <article class="attribution-card">
+          <h3 class="attribution-card__title">Agents <span class="attribution-card__hint">subagent calls</span></h3>
+          <div class="table-wrap">
+            <table aria-label="Agent token and cost attribution table">
+              <thead>
+                <tr>
+                  <th>Rank</th>
+                  <th>Agent</th>
+                  <th class="num">Usage</th>
+                  <th class="num">Events</th>
+                  <th class="num">Sessions</th>
+                  <th class="num">Input</th>
+                  <th class="num">Output</th>
+                  <th class="num">Cached</th>
+                  <th class="num">Total Tokens</th>
+                  <th class="num">Total Cost</th>
+                </tr>
+              </thead>
+              <tbody id="attributionAgentsTableBody">
+                <tr><td colspan="10">No agent attribution available.</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </article>
+        <article class="attribution-card">
+          <h3 class="attribution-card__title">MCP Servers <span class="attribution-card__hint">tool servers</span></h3>
+          <div class="table-wrap">
+            <table aria-label="MCP server token and cost attribution table">
+              <thead>
+                <tr>
+                  <th>Rank</th>
+                  <th>MCP Server</th>
+                  <th class="num">Usage</th>
+                  <th class="num">Events</th>
+                  <th class="num">Sessions</th>
+                  <th class="num">Input</th>
+                  <th class="num">Output</th>
+                  <th class="num">Cached</th>
+                  <th class="num">Total Tokens</th>
+                  <th class="num">Total Cost</th>
+                </tr>
+              </thead>
+              <tbody id="attributionMcpServersTableBody">
+                <tr><td colspan="10">No MCP attribution available.</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </article>
+        <article class="attribution-card">
+          <h3 class="attribution-card__title">Tools <span class="attribution-card__hint">tool calls + MCP methods</span></h3>
+          <div class="table-wrap">
+            <table aria-label="Tool token and cost attribution table">
+              <thead>
+                <tr>
+                  <th>Rank</th>
+                  <th>Tool</th>
+                  <th class="num">Usage</th>
+                  <th class="num">Events</th>
+                  <th class="num">Sessions</th>
+                  <th class="num">Input</th>
+                  <th class="num">Output</th>
+                  <th class="num">Cached</th>
+                  <th class="num">Total Tokens</th>
+                  <th class="num">Total Cost</th>
+                </tr>
+              </thead>
+              <tbody id="attributionToolsTableBody">
+                <tr><td colspan="10">No tool attribution available.</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </article>
+        <article class="attribution-card">
+          <h3 class="attribution-card__title">Plugins / Extensions <span class="attribution-card__hint">plugin + extension namespaces</span></h3>
+          <div class="table-wrap">
+            <table aria-label="Plugin and extension token and cost attribution table">
+              <thead>
+                <tr>
+                  <th>Rank</th>
+                  <th>Plugin / Extension</th>
+                  <th class="num">Usage</th>
+                  <th class="num">Events</th>
+                  <th class="num">Sessions</th>
+                  <th class="num">Input</th>
+                  <th class="num">Output</th>
+                  <th class="num">Cached</th>
+                  <th class="num">Total Tokens</th>
+                  <th class="num">Total Cost</th>
+                </tr>
+              </thead>
+              <tbody id="attributionPluginsTableBody">
+                <tr><td colspan="10">No plugin or extension attribution available.</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </article>
+      </div>
+    </section>
+
+    <section class="panel">
+      <div class="usage-chart-head">
         <h2 class="usage-chart-title">Agent CLI + Model Breakdown</h2>
       </div>
       <p id="usageBreakdownSummary" class="foot">Range-scoped breakdown grouped by agent CLI and model.</p>
@@ -2302,6 +2485,14 @@
     const tableBody = document.getElementById("dailyUsageTableBody");
     const breakdownTableBody = document.getElementById("usageBreakdownTableBody");
     const breakdownSummary = document.getElementById("usageBreakdownSummary");
+    const attributionSummary = document.getElementById("usageAttributionSummary");
+    const attributionTableBodies = {
+      skill: document.getElementById("attributionSkillsTableBody"),
+      agent: document.getElementById("attributionAgentsTableBody"),
+      mcp_server: document.getElementById("attributionMcpServersTableBody"),
+      tool: document.getElementById("attributionToolsTableBody"),
+      plugin: document.getElementById("attributionPluginsTableBody"),
+    };
     const activityHeatmap = document.getElementById("activityHeatmap");
     const activitySummaryTableBody = document.getElementById("activitySummaryTableBody");
     const activityRhythmSummary = document.getElementById("activityRhythmSummary");
@@ -2417,6 +2608,18 @@
       const numeric = Number(raw.replace(/[^0-9.-]/g, ""));
       return Number.isFinite(numeric) ? numeric : 0;
     };
+    const escapeHtml = (value) => String(value ?? "").replace(/[&<>'"]/g, (char) => ({
+      "&": "&amp;",
+      "<": "&lt;",
+      ">": "&gt;",
+      "'": "&#39;",
+      '"': "&quot;",
+    }[char]));
+    const formatUsagePercent = (value) => {
+      const percent = (Number.isFinite(value) ? value : 0) * 100;
+      const digits = percent > 0 && percent < 1 ? 1 : 0;
+      return `${percent.toFixed(digits)}%`;
+    };
 
     const normalizeBreakdownRows = (rows) => {
       if (!Array.isArray(rows)) return [];
@@ -2448,6 +2651,51 @@
           return;
         }
         existing.sessions += item.sessions;
+        existing.input += item.input;
+        existing.output += item.output;
+        existing.cached += item.cached;
+        existing.total += item.total;
+        existing.inputCost += item.inputCost;
+        existing.outputCost += item.outputCost;
+        existing.cachedCost += item.cachedCost;
+        existing.totalCost += item.totalCost;
+        existing.costComplete = existing.costComplete && item.costComplete;
+      });
+      return Array.from(byBucket.values());
+    };
+
+    const normalizeAttributionRows = (rows) => {
+      if (!Array.isArray(rows)) return [];
+      return rows
+        .map((row) => ({
+          category: normalizeText(row?.category, "unknown"),
+          name: normalizeText(row?.name, "unknown"),
+          sessions: parseMetric(row?.sessions),
+          events: parseMetric(row?.events ?? row?.event_count),
+          input: parseMetric(row?.input_tokens ?? row?.input),
+          output: parseMetric(row?.output_tokens ?? row?.output),
+          cached: parseMetric(row?.cached_tokens ?? row?.cached),
+          total: parseMetric(row?.total_tokens ?? row?.total),
+          inputCost: parseMetric(row?.input_cost_usd),
+          outputCost: parseMetric(row?.output_cost_usd),
+          cachedCost: parseMetric(row?.cached_cost_usd),
+          totalCost: parseMetric(row?.total_cost_usd),
+          costComplete: parseCostComplete(row?.cost_complete, row?.cost_status),
+        }))
+        .filter((row) => row.category && row.name && row.category !== "unknown");
+    };
+
+    const mergeAttributionRows = (...rowSets) => {
+      const byBucket = new Map();
+      rowSets.flat().forEach((item) => {
+        const key = `${item.category}@@${item.name}`;
+        const existing = byBucket.get(key);
+        if (!existing) {
+          byBucket.set(key, { ...item });
+          return;
+        }
+        existing.sessions += item.sessions;
+        existing.events += item.events;
         existing.input += item.input;
         existing.output += item.output;
         existing.cached += item.cached;
@@ -2522,6 +2770,7 @@
           totalCost: parseMetric(row?.total_cost_usd),
           costComplete: parseCostComplete(row?.cost_complete, row?.cost_status),
           breakdownRows: normalizeBreakdownRows(row?.breakdown_rows),
+          attributionRows: normalizeAttributionRows(row?.attribution_rows),
         }))
         .filter((item) => item.date && !Number.isNaN(item.dateObj.getTime()));
     };
@@ -2531,7 +2780,7 @@
       rowSets.flat().forEach((item) => {
         const existing = byDate.get(item.date);
         if (!existing) {
-          byDate.set(item.date, { ...item, breakdownRows: [...(item.breakdownRows || [])] });
+          byDate.set(item.date, { ...item, breakdownRows: [...(item.breakdownRows || [])], attributionRows: [...(item.attributionRows || [])] });
           return;
         }
         existing.sessions += item.sessions;
@@ -2545,6 +2794,7 @@
         existing.totalCost += item.totalCost;
         existing.costComplete = existing.costComplete && item.costComplete;
         existing.breakdownRows = mergeBreakdownRows(existing.breakdownRows, item.breakdownRows);
+        existing.attributionRows = mergeAttributionRows(existing.attributionRows, item.attributionRows);
       });
       return Array.from(byDate.values()).sort((a, b) => b.dateObj - a.dateObj);
     };
@@ -2568,6 +2818,7 @@
             totalCost: parseCostCell(costText),
             costComplete: !costText.includes("partial"),
             breakdownRows: [],
+            attributionRows: [],
           };
         })
         .filter((item) => item.date && !Number.isNaN(item.dateObj.getTime()));
@@ -3013,6 +3264,10 @@
       (a, b) => b.total - a.total || b.sessions - a.sessions || a.agent_cli.localeCompare(b.agent_cli) || a.model.localeCompare(b.model)
     );
 
+    const sortAttributionRows = (rows) => [...rows].sort(
+      (a, b) => b.total - a.total || b.events - a.events || b.sessions - a.sessions || a.name.localeCompare(b.name)
+    );
+
     const sortLabel = (sortKey) => sortLabels[sortKey] || sortLabels["tokens-desc"];
 
     let activeProvider = "combined";
@@ -3244,6 +3499,54 @@
       }
     };
 
+    const attributionLabels = {
+      skill: "skill",
+      agent: "agent",
+      mcp_server: "MCP server",
+      tool: "tool",
+      plugin: "plugin / extension",
+    };
+
+    const renderAttributionBreakdown = (rows, providerLabel, rangeLabelText, rangeTotals) => {
+      const rowsByCategory = {
+        skill: [],
+        agent: [],
+        mcp_server: [],
+        tool: [],
+        plugin: [],
+      };
+      rows.forEach((item) => {
+        if (rowsByCategory[item.category]) rowsByCategory[item.category].push(item);
+      });
+
+      Object.entries(rowsByCategory).forEach(([category, categoryRows]) => {
+        const body = attributionTableBodies[category];
+        if (!body) return;
+        const label = attributionLabels[category] || category;
+        const sortedRows = sortAttributionRows(categoryRows);
+        if (!sortedRows.length) {
+          body.innerHTML = `<tr><td colspan="10">No ${escapeHtml(label)} attribution available for the selected range.</td></tr>`;
+          return;
+        }
+        body.innerHTML = sortedRows
+          .map((item, index) => {
+            const rank = index + 1;
+            const rankClass = rank <= 3 ? "rank top-3" : "rank";
+            const share = rangeTotals.total > 0 ? item.total / rangeTotals.total : 0;
+            return `<tr><td><span class="${rankClass}">${rank}</span></td><td>${escapeHtml(item.name)}</td><td class="num attribution-share">${formatUsagePercent(share)}</td><td class="num">${formatNumber(item.events)}</td><td class="num">${formatNumber(item.sessions)}</td><td class="num">${formatNumber(item.input)}</td><td class="num">${formatNumber(item.output)}</td><td class="num">${formatNumber(item.cached)}</td><td class="num">${formatNumber(item.total)}</td><td class="num total-col">${formatCostDisplay(item.totalCost, item.costComplete)}</td></tr>`;
+          })
+          .join("");
+      });
+
+      if (attributionSummary) {
+        const observedCategories = Object.entries(rowsByCategory)
+          .filter(([, categoryRows]) => categoryRows.length)
+          .map(([category, categoryRows]) => `${categoryRows.length} ${attributionLabels[category] || category}${categoryRows.length === 1 ? "" : "s"}`);
+        const observedText = observedCategories.length ? observedCategories.join(" · ") : "no attributed extension-point usage";
+        attributionSummary.textContent = `Claude-style context attribution for ${providerLabel} (${rangeLabelText}): ${observedText}. Token and cost shares are estimated from sessions whose transcripts expose Skills, Agent/Subagent, MCP, Tool, Plugin, or Extension events.`;
+      }
+    };
+
     const updateWeekCards = () => {
       const today = toDateOnly(new Date());
       const currentMonday = addDays(today, -((today.getDay() + 6) % 7));
@@ -3266,6 +3569,7 @@
     };
 
     const aggregateBreakdownForRows = (rows) => sortBreakdownRows(mergeBreakdownRows(...rows.map((item) => item.breakdownRows || [])));
+    const aggregateAttributionForRows = (rows) => sortAttributionRows(mergeAttributionRows(...rows.map((item) => item.attributionRows || [])));
 
     const renderUsageChart = () => {
       if (!usageChartBars || !usageChartMax) return;
@@ -3289,11 +3593,13 @@
       const providerLabel = providerLabels[activeProvider] || "Combined";
       const selectedLabel = selectedRangeLabel();
       const breakdownRows = aggregateBreakdownForRows(chartRows);
+      const attributionRows = aggregateAttributionForRows(chartRows);
       const partialCostWarning = !rangeTotals.costComplete ? ` ${pricingWarningSummary(activeProvider) || "Some selected usage lacks mapped or native pricing."}` : "";
 
       usageChartBars.innerHTML = "";
       renderTable(chartRows);
       renderBreakdownTable(breakdownRows, providerLabel, selectedLabel, rangeTotals);
+      renderAttributionBreakdown(attributionRows, providerLabel, selectedLabel, rangeTotals);
       renderActivityRhythm(filteredActivityRows, providerLabel, selectedLabel);
       updateWeekCards();
 

@@ -253,6 +253,71 @@ class UsageAggregationTests(unittest.TestCase):
             self.assertEqual(haiku.total_tokens, 10)
             self.assertAlmostEqual(haiku.total_cost_usd, 0.00001904)
 
+    def test_collect_claude_daily_totals_extracts_usage_attribution_dimensions(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            project_file = root / "-Users-jwei" / "session-attribution.jsonl"
+            self._write_jsonl(
+                project_file,
+                [
+                    {
+                        "type": "user",
+                        "sessionId": "session-attribution",
+                        "timestamp": "2026-02-27T12:00:00Z",
+                        "message": {
+                            "content": "<command-message>commit</command-message><command-message>myplugin:status</command-message>",
+                        },
+                    },
+                    {
+                        "type": "assistant",
+                        "sessionId": "session-attribution",
+                        "timestamp": "2026-02-27T12:00:01Z",
+                        "message": {
+                            "content": [
+                                {"type": "tool_use", "id": "tool-1", "name": "mcp__testmcp__query", "input": {}},
+                                {"type": "tool_use", "id": "tool-2", "name": "Agent", "input": {"subagent_type": "Explore"}},
+                                {"type": "tool_use", "id": "tool-3", "name": "Read", "input": {"file_path": "README.md"}},
+                                {"type": "tool_use", "id": "tool-4", "name": "extension__extpack__search", "input": {"query": "usage"}},
+                            ]
+                        },
+                    },
+                    {
+                        "requestId": "req-attribution",
+                        "sessionId": "session-attribution",
+                        "timestamp": "2026-02-27T12:00:02Z",
+                        "message": {
+                            "model": "claude-sonnet-4-6",
+                            "usage": {
+                                "input_tokens": 10,
+                                "cache_creation_input_tokens": 20,
+                                "cache_read_input_tokens": 30,
+                                "output_tokens": 8,
+                            },
+                        },
+                    },
+                ],
+            )
+
+            totals = server._collect_claude_daily_totals(root)
+            expected_day = datetime.fromisoformat("2026-02-27T12:00:02+00:00").astimezone().date()
+
+            self.assertIn(expected_day, totals)
+            attribution = totals[expected_day].attributions
+            self.assertEqual(attribution[("mcp_server", "testmcp")].total_tokens, 68)
+            self.assertEqual(attribution[("agent", "Explore")].total_tokens, 68)
+            self.assertEqual(attribution[("tool", "mcp:testmcp/query")].events, 1)
+            self.assertEqual(attribution[("tool", "mcp:testmcp/query")].total_tokens, 17)
+            self.assertEqual(attribution[("tool", "Read")].total_tokens, 17)
+            self.assertEqual(attribution[("tool", "extension:extpack/search")].total_tokens, 17)
+            self.assertEqual(attribution[("plugin", "myplugin")].events, 1)
+            self.assertEqual(attribution[("plugin", "myplugin")].total_tokens, 34)
+            self.assertEqual(attribution[("plugin", "extpack")].events, 1)
+            self.assertEqual(attribution[("plugin", "extpack")].total_tokens, 34)
+            self.assertAlmostEqual(attribution[("plugin", "myplugin")].total_cost_usd, 0.000117)
+            self.assertEqual(attribution[("skill", "/commit")].events, 1)
+            self.assertEqual(attribution[("skill", "/commit")].total_tokens, 34)
+            self.assertEqual(attribution[("skill", "/myplugin:status")].total_tokens, 34)
+
     def test_collect_claude_daily_totals_uses_local_date_bucketing(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)

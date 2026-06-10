@@ -5,6 +5,7 @@ from dataclasses import dataclass, field
 
 
 BreakdownKey = tuple[str, str]
+AttributionKey = tuple[str, str]
 ActivityKey = tuple[dt.date, int]
 
 
@@ -17,6 +18,27 @@ class BreakdownTotals:
     agent_cli: str
     model: str
     sessions: int = 0
+    input_tokens: int = 0
+    output_tokens: int = 0
+    cached_tokens: int = 0
+    total_tokens: int = 0
+    input_cost_usd: float = 0.0
+    output_cost_usd: float = 0.0
+    cached_cost_usd: float = 0.0
+    total_cost_usd: float = 0.0
+    cost_complete: bool = True
+
+    @property
+    def cost_status(self) -> str:
+        return "complete" if self.cost_complete else "partial"
+
+
+@dataclass
+class AttributionTotals:
+    category: str
+    name: str
+    sessions: int = 0
+    events: int = 0
     input_tokens: int = 0
     output_tokens: int = 0
     cached_tokens: int = 0
@@ -106,6 +128,7 @@ class DailyTotals:
     total_cost_usd: float = 0.0
     cost_complete: bool = True
     breakdowns: dict[BreakdownKey, BreakdownTotals] = field(default_factory=dict, repr=False)
+    attributions: dict[AttributionKey, AttributionTotals] = field(default_factory=dict, repr=False)
 
     @property
     def cost_status(self) -> str:
@@ -169,6 +192,42 @@ class DailyTotals:
         if cost_complete is not None:
             bucket.cost_complete = bucket.cost_complete and cost_complete
 
+    def add_attribution(
+        self,
+        *,
+        category: str,
+        name: str,
+        sessions: int = 0,
+        events: int = 0,
+        input_tokens: int = 0,
+        output_tokens: int = 0,
+        cached_tokens: int = 0,
+        total_tokens: int = 0,
+        input_cost_usd: float = 0.0,
+        output_cost_usd: float = 0.0,
+        cached_cost_usd: float = 0.0,
+        total_cost_usd: float = 0.0,
+        cost_complete: bool | None = None,
+    ) -> None:
+        key = (category, name)
+        bucket = self.attributions.get(key)
+        if bucket is None:
+            bucket = AttributionTotals(category=category, name=name)
+            self.attributions[key] = bucket
+
+        bucket.sessions += sessions
+        bucket.events += events
+        bucket.input_tokens += input_tokens
+        bucket.output_tokens += output_tokens
+        bucket.cached_tokens += cached_tokens
+        bucket.total_tokens += total_tokens
+        bucket.input_cost_usd = round_cost(bucket.input_cost_usd + input_cost_usd)
+        bucket.output_cost_usd = round_cost(bucket.output_cost_usd + output_cost_usd)
+        bucket.cached_cost_usd = round_cost(bucket.cached_cost_usd + cached_cost_usd)
+        bucket.total_cost_usd = round_cost(bucket.total_cost_usd + total_cost_usd)
+        if cost_complete is not None:
+            bucket.cost_complete = bucket.cost_complete and cost_complete
+
     def merge_from(self, other: "DailyTotals") -> None:
         self.sessions += other.sessions
         self.add_usage(
@@ -187,6 +246,22 @@ class DailyTotals:
                 agent_cli=bucket.agent_cli,
                 model=bucket.model,
                 sessions=bucket.sessions,
+                input_tokens=bucket.input_tokens,
+                output_tokens=bucket.output_tokens,
+                cached_tokens=bucket.cached_tokens,
+                total_tokens=bucket.total_tokens,
+                input_cost_usd=bucket.input_cost_usd,
+                output_cost_usd=bucket.output_cost_usd,
+                cached_cost_usd=bucket.cached_cost_usd,
+                total_cost_usd=bucket.total_cost_usd,
+                cost_complete=bucket.cost_complete,
+            )
+        for bucket in other.attributions.values():
+            self.add_attribution(
+                category=bucket.category,
+                name=bucket.name,
+                sessions=bucket.sessions,
+                events=bucket.events,
                 input_tokens=bucket.input_tokens,
                 output_tokens=bucket.output_tokens,
                 cached_tokens=bucket.cached_tokens,

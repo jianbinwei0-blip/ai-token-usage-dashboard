@@ -3,7 +3,7 @@ from __future__ import annotations
 import datetime as dt
 from dataclasses import dataclass
 
-from .models import ActivityTotals, BreakdownTotals, DailyTotals, round_cost
+from .models import ActivityTotals, AttributionTotals, BreakdownTotals, DailyTotals, round_cost
 
 
 @dataclass
@@ -13,6 +13,7 @@ class DailyMaterialization:
     ranked_values: list[DailyTotals]
     summary: dict[str, int | float | bool | str]
     breakdown_rows: list[dict[str, int | float | str | bool]]
+    attribution_rows: list[dict[str, int | float | str | bool]]
 
 
 def serialize_breakdown_rows(breakdowns: dict[tuple[str, str], BreakdownTotals]) -> list[dict[str, int | float | str | bool]]:
@@ -40,6 +41,37 @@ def serialize_breakdown_rows(breakdowns: dict[tuple[str, str], BreakdownTotals])
             -int(row["sessions"]),
             str(row["agent_cli"]),
             str(row["model"]),
+        )
+    )
+    return rows
+
+
+def serialize_attribution_rows(attributions: dict[tuple[str, str], AttributionTotals]) -> list[dict[str, int | float | str | bool]]:
+    rows = [
+        {
+            "category": bucket.category,
+            "name": bucket.name,
+            "sessions": bucket.sessions,
+            "events": bucket.events,
+            "input_tokens": bucket.input_tokens,
+            "output_tokens": bucket.output_tokens,
+            "cached_tokens": bucket.cached_tokens,
+            "total_tokens": bucket.total_tokens,
+            "input_cost_usd": bucket.input_cost_usd,
+            "output_cost_usd": bucket.output_cost_usd,
+            "cached_cost_usd": bucket.cached_cost_usd,
+            "total_cost_usd": bucket.total_cost_usd,
+            "cost_complete": bucket.cost_complete,
+            "cost_status": bucket.cost_status,
+        }
+        for bucket in attributions.values()
+    ]
+    rows.sort(
+        key=lambda row: (
+            str(row["category"]),
+            -int(row["total_tokens"]),
+            -int(row["events"]),
+            str(row["name"]),
         )
     )
     return rows
@@ -124,6 +156,7 @@ def materialize_daily(
     values: list[DailyTotals] = []
     rows: list[dict[str, int | float | str | bool | list[dict[str, int | float | str | bool]]]] = []
     breakdown_totals: dict[tuple[str, str], BreakdownTotals] = {}
+    attribution_totals: dict[tuple[str, str], AttributionTotals] = {}
     input_tokens = 0
     output_tokens = 0
     cached_tokens = 0
@@ -143,23 +176,24 @@ def materialize_daily(
             continue
 
         values.append(item)
-        rows.append(
-            {
-                "date": usage_date.isoformat(),
-                "sessions": item.sessions,
-                "input_tokens": item.input_tokens,
-                "output_tokens": item.output_tokens,
-                "cached_tokens": item.cached_tokens,
-                "total_tokens": item.total_tokens,
-                "input_cost_usd": item.input_cost_usd,
-                "output_cost_usd": item.output_cost_usd,
-                "cached_cost_usd": item.cached_cost_usd,
-                "total_cost_usd": item.total_cost_usd,
-                "cost_complete": item.cost_complete,
-                "cost_status": item.cost_status,
-                "breakdown_rows": serialize_breakdown_rows(item.breakdowns),
-            }
-        )
+        row = {
+            "date": usage_date.isoformat(),
+            "sessions": item.sessions,
+            "input_tokens": item.input_tokens,
+            "output_tokens": item.output_tokens,
+            "cached_tokens": item.cached_tokens,
+            "total_tokens": item.total_tokens,
+            "input_cost_usd": item.input_cost_usd,
+            "output_cost_usd": item.output_cost_usd,
+            "cached_cost_usd": item.cached_cost_usd,
+            "total_cost_usd": item.total_cost_usd,
+            "cost_complete": item.cost_complete,
+            "cost_status": item.cost_status,
+            "breakdown_rows": serialize_breakdown_rows(item.breakdowns),
+        }
+        if item.attributions:
+            row["attribution_rows"] = serialize_attribution_rows(item.attributions)
+        rows.append(row)
 
         input_tokens += item.input_tokens
         output_tokens += item.output_tokens
@@ -190,9 +224,27 @@ def materialize_daily(
                 aggregate.total_cost_usd = round_cost(aggregate.total_cost_usd + bucket.total_cost_usd)
                 aggregate.cost_complete = aggregate.cost_complete and bucket.cost_complete
 
+            for key, bucket in item.attributions.items():
+                aggregate_attr = attribution_totals.get(key)
+                if aggregate_attr is None:
+                    aggregate_attr = AttributionTotals(category=bucket.category, name=bucket.name)
+                    attribution_totals[key] = aggregate_attr
+                aggregate_attr.sessions += bucket.sessions
+                aggregate_attr.events += bucket.events
+                aggregate_attr.input_tokens += bucket.input_tokens
+                aggregate_attr.output_tokens += bucket.output_tokens
+                aggregate_attr.cached_tokens += bucket.cached_tokens
+                aggregate_attr.total_tokens += bucket.total_tokens
+                aggregate_attr.input_cost_usd = round_cost(aggregate_attr.input_cost_usd + bucket.input_cost_usd)
+                aggregate_attr.output_cost_usd = round_cost(aggregate_attr.output_cost_usd + bucket.output_cost_usd)
+                aggregate_attr.cached_cost_usd = round_cost(aggregate_attr.cached_cost_usd + bucket.cached_cost_usd)
+                aggregate_attr.total_cost_usd = round_cost(aggregate_attr.total_cost_usd + bucket.total_cost_usd)
+                aggregate_attr.cost_complete = aggregate_attr.cost_complete and bucket.cost_complete
+
     rows.sort(key=lambda row: str(row["date"]), reverse=True)
     ranked_values = sorted(values, key=lambda item: (-item.total_tokens, item.date.isoformat()))
     materialized_breakdown_rows = serialize_breakdown_rows(breakdown_totals) if include_breakdown_rows else []
+    materialized_attribution_rows = serialize_attribution_rows(attribution_totals) if include_breakdown_rows else []
 
     return DailyMaterialization(
         values=values,
@@ -214,6 +266,7 @@ def materialize_daily(
             "highest_single_day": highest_single_day,
         },
         breakdown_rows=materialized_breakdown_rows,
+        attribution_rows=materialized_attribution_rows,
     )
 
 

@@ -2,6 +2,7 @@ import datetime as dt
 import sys
 import unittest
 from pathlib import Path
+from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
@@ -16,6 +17,7 @@ from dashboard_core.tmux_status import (  # noqa: E402
     format_usd_short,
     render_tmux_status,
 )
+from render_tmux_status import parse_args as parse_tmux_status_args  # noqa: E402
 
 
 class TmuxStatusTests(unittest.TestCase):
@@ -27,6 +29,38 @@ class TmuxStatusTests(unittest.TestCase):
         self.assertEqual(format_usd_short(47.0), "$47")
         self.assertEqual(format_recalc_short(68.4), "68ms")
         self.assertEqual(format_recalc_short(1_240), "1.2s")
+
+    def test_default_status_range_is_month_to_date(self) -> None:
+        with mock.patch.object(sys, "argv", ["render_tmux_status.py"]):
+            self.assertEqual(parse_tmux_status_args().range_preset, "mtd")
+
+        dataset_payload = {
+            "generated_at": "2026-04-21T15:04:00+00:00",
+            "providers_available": {"codex": True, "claude": False, "pi": False, "combined": True},
+            "pricing": {"source": "built-in", "version": "2026-03-08", "warnings": []},
+            "providers": {
+                "combined": {
+                    "rows": [
+                        {"date": "2026-04-21", "total_tokens": 100, "total_cost_usd": 1.0, "cost_complete": True},
+                        {"date": "2026-04-01", "total_tokens": 50, "total_cost_usd": 0.5, "cost_complete": True},
+                        {"date": "2026-03-31", "total_tokens": 1_000, "total_cost_usd": 10.0, "cost_complete": True},
+                    ]
+                }
+            },
+        }
+
+        snapshot = build_tmux_status_snapshot(
+            dataset_payload,
+            now=dt.datetime(2026, 4, 21, 15, 4, tzinfo=dt.timezone.utc),
+        )
+
+        self.assertEqual(snapshot["range"]["preset"], "mtd")
+        self.assertEqual(snapshot["range"]["label"], "Month to Date")
+        self.assertEqual(snapshot["range"]["from"], "2026-04-01")
+        self.assertEqual(snapshot["range"]["to"], "2026-04-21")
+        self.assertEqual(snapshot["metrics"]["today_tokens"], 100)
+        self.assertEqual(snapshot["metrics"]["range_tokens"], 150)
+        self.assertAlmostEqual(snapshot["metrics"]["range_cost_usd"], 1.5)
 
     def test_build_snapshot_for_combined_wtd(self) -> None:
         dataset_payload = {
@@ -151,7 +185,7 @@ class TmuxStatusTests(unittest.TestCase):
             "health": "ok",
             "scope": "combined",
             "providers": ["codex", "claude", "pi"],
-            "range": {"preset": "wtd"},
+            "range": {"preset": "mtd"},
             "metrics": {
                 "today_tokens": 90_189_559,
                 "today_input_tokens": 40_000_000,
@@ -169,7 +203,7 @@ class TmuxStatusTests(unittest.TestCase):
 
         self.assertEqual(
             render_tmux_status(base_snapshot, now=now),
-            "AI ok · T I 40M O 10M Σ 90.2M · WTD I 250M O 62.4M Σ 562.4M · WTD $13.4k · 15:04 → 15:05",
+            "AI ok · T I 40M O 10M Σ 90.2M · MTD I 250M O 62.4M Σ 562.4M · MTD $13.4k · 15:04 → 15:05",
         )
 
         partial_snapshot = {
@@ -179,7 +213,7 @@ class TmuxStatusTests(unittest.TestCase):
         }
         self.assertEqual(
             render_tmux_status(partial_snapshot, now=now),
-            "AI partial · T I 40M O 10M Σ 90.2M · WTD I 250M O 62.4M Σ 562.4M · WTD $13.4k* · 15:04 → 15:05",
+            "AI partial · T I 40M O 10M Σ 90.2M · MTD I 250M O 62.4M Σ 562.4M · MTD $13.4k* · 15:04 → 15:05",
         )
 
         borderline_snapshot = {**base_snapshot, "generated_at": "2026-04-21T15:00:00+00:00"}
@@ -190,7 +224,7 @@ class TmuxStatusTests(unittest.TestCase):
         self.assertEqual(effective_health(stale_snapshot, now=stale_now), "stale")
         self.assertEqual(
             render_tmux_status(stale_snapshot, now=stale_now),
-            "AI stale · T I 40M O 10M Σ 90.2M · WTD I 250M O 62.4M Σ 562.4M · WTD $13.4k · 15:00 → 15:05",
+            "AI stale · T I 40M O 10M Σ 90.2M · MTD I 250M O 62.4M Σ 562.4M · MTD $13.4k · 15:00 → 15:05",
         )
 
         error_snapshot = {**base_snapshot, "health": "error"}
@@ -204,7 +238,7 @@ class TmuxStatusTests(unittest.TestCase):
         self.assertIn("#[fg=#79C0FF,bold]250M#[default]", styled)
         self.assertIn("#[fg=#79C0FF,bold]62.4M#[default]", styled)
         self.assertIn("#[fg=#1F2328,bg=#F2CC60,bold]562.4M#[default]", styled)
-        self.assertIn("#[fg=#8B949E]WTD#[default] #[fg=#7EE787,bold]$13.4k#[default]", styled)
+        self.assertIn("#[fg=#8B949E]MTD#[default] #[fg=#7EE787,bold]$13.4k#[default]", styled)
         self.assertIn("#[fg=#E6EDF3]15:04#[default]", styled)
         self.assertIn("#[fg=#79C0FF]15:05#[default]", styled)
         unavailable = render_tmux_status({"providers": []}, use_tmux_style=True)

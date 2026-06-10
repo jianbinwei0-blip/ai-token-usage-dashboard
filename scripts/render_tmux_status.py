@@ -27,7 +27,7 @@ from dashboard_core.tmux_status import build_tmux_status_snapshot, next_refresh_
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Render compact tmux status output for the AI token dashboard.")
     parser.add_argument("--scope", default="combined", choices=["combined", "codex", "claude", "pi"])
-    parser.add_argument("--range", dest="range_preset", default="wtd")
+    parser.add_argument("--range", dest="range_preset", default="mtd")
     parser.add_argument("--cache-file", default=str(REPO_ROOT / "tmp" / "tmux_status.json"))
     parser.add_argument("--refresh-interval-minutes", type=int, default=5)
     parser.add_argument("--max-width", type=int, default=None)
@@ -89,7 +89,7 @@ def snapshot_is_fresh(snapshot: dict | None, *, scope: str, range_preset: str, r
     if str(snapshot.get("scope") or "combined") != scope:
         return False
     cached_range = (snapshot.get("range") or {}).get("preset")
-    if str(cached_range or "wtd") != range_preset:
+    if str(cached_range or "mtd") != range_preset:
         return False
     if str(snapshot.get("health") or "").lower() == "error":
         return False

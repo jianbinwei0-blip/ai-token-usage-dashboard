@@ -17,7 +17,7 @@ Supports Codex, Claude, and PI Coding Agent.
 - Range-scoped breakdown table grouped by `Agent CLI` + `Model`, including cost totals
 - Horizontal bar chart (with rank, total tokens, and session count) above the table
 - Auto-recalc on browser refresh and every 5 minutes via local `localhost` endpoint
-- Compact tmux status rendering for Today/WTD input, output, total-token, and cost pulse via `scripts/render_tmux_status.py`, aligned to 5-minute refresh boundaries
+- Compact tmux status rendering for Today/MTD input, output, total-token, and cost pulse via `scripts/render_tmux_status.py`, aligned to 5-minute refresh boundaries
 
 ## Project Structure
 
@@ -85,11 +85,11 @@ You can surface a compact AI usage pulse directly in tmux.
 Current compact format:
 
 ```text
-AI ok · T I 4.2M O 1.1M Σ 5.3M · WTD I 210.3M O 37.4M Σ 247.7M · WTD $227 · 08:50→08:55
+AI ok · T I 4.2M O 1.1M Σ 5.3M · MTD I 210.3M O 37.4M Σ 247.7M · MTD $227 · 08:50→08:55
 ```
 
 Where:
-- `T` = today, `WTD` = week to date
+- `T` = today, `MTD` = month to date
 - `I`/`O`/`Σ` = input, output, and total tokens
 - trailing left time = last successful refresh time
 - trailing right time = next aligned 5-minute refresh boundary
@@ -146,6 +146,7 @@ curl http://127.0.0.1:8765/health
 - A built-in versioned pricing table is used for derived Codex and Claude costs, and can be overridden via `AI_USAGE_PRICING_FILE`.
 - Codex usage keeps the latest `token_count` snapshot per session, extracts `originator`/`source` for the CLI bucket, uses the latest observed `turn_context.payload.model` when present, and prices uncached input separately from cached tokens.
 - Claude request usage is deduplicated by `(sessionId, requestId)`, keeps the highest observed token values for the request, computes `cached_tokens = cache_creation_input_tokens + cache_read_input_tokens`, and derives cost from the model rate card.
+- Claude-style context attribution is extracted when transcript events expose it: Skills from `<command-message>` slash commands, Agents/Subagents from `Agent`/`Task` tool calls, MCP servers from `mcp__server__method` tools, Tools from `tool_use` blocks, and Plugins / Extensions from namespaced slash commands plus plugin/extension metadata or tool namespaces. Attribution token/cost shares are estimated from the session totals for matching transcript events.
 - PI usage is read from `~/.pi/agent/sessions/**/*.jsonl`, tracks the active model via `model_change` events, computes `cached_tokens = cacheRead + cacheWrite`, prefers native `message.usage.cost.*` when present, and resumes parsing from the last verified byte offset when a session log grows append-only.
 - Unmapped provider/model pricing is surfaced as partial cost in the API/UI instead of silently treated as trusted zero cost.
 - `/recalc` responses expose `Server-Timing` headers and `timings_ms` in the JSON payload, and the dashboard hero shows the latest refresh timing summary for quick diagnosis.

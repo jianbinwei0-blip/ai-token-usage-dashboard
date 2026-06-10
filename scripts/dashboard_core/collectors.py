@@ -5,6 +5,7 @@ import hashlib
 import json
 import os
 import re
+from collections import Counter, defaultdict
 from pathlib import Path
 
 from .models import ActivityTotals, DailyTotals
@@ -16,10 +17,33 @@ LOCAL_TIMEZONE = dt.datetime.now().astimezone().tzinfo or dt.timezone.utc
 CODEX_ROLLOUT_TIMESTAMP_PATTERN = re.compile(
     r"(\d{4})-(\d{2})-(\d{2})T(\d{2})-(\d{2})-(\d{2})"
 )
+CLAUDE_COMMAND_MESSAGE_PATTERN = re.compile(r"<command-message>([^<]+)</command-message>")
+CLAUDE_BUILTIN_COMMANDS = frozenset(
+    {
+        "exit",
+        "help",
+        "clear",
+        "compact",
+        "cost",
+        "doctor",
+        "init",
+        "login",
+        "logout",
+        "memory",
+        "permissions",
+        "review",
+        "status",
+        "terminal-setup",
+        "vim",
+        "fast",
+        "effort",
+    }
+)
 _CODEX_SESSION_USAGE_CACHE: dict[str, tuple[int, int, str, dict[str, object] | None]] = {}
 _CLAUDE_REQUEST_RECORDS_CACHE: dict[str, tuple[int, int, list[dict[str, object]]]] = {}
+_CLAUDE_ATTRIBUTION_EVENTS_CACHE: dict[str, tuple[int, int, list[dict[str, object]]]] = {}
 _PI_SESSION_RECORDS_CACHE: dict[str, tuple[int, int, dict[str, object]]] = {}
-_PERSISTENT_CACHE_VERSION = 2
+_PERSISTENT_CACHE_VERSION = 4
 _PERSISTENT_CACHE_LOADED_FROM: str | None = None
 _PERSISTENT_CACHE_DIRTY = False
 _PI_APPEND_FAST_PATH_WINDOW_BYTES = 4096
@@ -205,6 +229,7 @@ def load_persistent_parse_caches(cache_path: Path | None) -> None:
 
     _CODEX_SESSION_USAGE_CACHE.clear()
     _CLAUDE_REQUEST_RECORDS_CACHE.clear()
+    _CLAUDE_ATTRIBUTION_EVENTS_CACHE.clear()
     _PI_SESSION_RECORDS_CACHE.clear()
     _PERSISTENT_CACHE_LOADED_FROM = target
     _PERSISTENT_CACHE_DIRTY = False
@@ -246,6 +271,19 @@ def load_persistent_parse_caches(cache_path: Path | None) -> None:
             records = [record for item in records_payload if (record := _deserialize_record(item)) is not None]
             _CLAUDE_REQUEST_RECORDS_CACHE[file_path] = (size, mtime_ns, records)
 
+    claude_attribution_payload = payload.get("claude_attribution")
+    if isinstance(claude_attribution_payload, dict):
+        for file_path, entry in claude_attribution_payload.items():
+            if not isinstance(entry, dict):
+                continue
+            size = safe_non_negative_int(entry.get("size"))
+            mtime_ns = safe_non_negative_int(entry.get("mtime_ns"))
+            events_payload = entry.get("events")
+            if not isinstance(events_payload, list):
+                continue
+            events = [event for item in events_payload if (event := _deserialize_record(item)) is not None]
+            _CLAUDE_ATTRIBUTION_EVENTS_CACHE[file_path] = (size, mtime_ns, events)
+
     pi_payload = payload.get("pi")
     if isinstance(pi_payload, dict):
         for file_path, entry in pi_payload.items():
@@ -283,6 +321,14 @@ def save_persistent_parse_caches(cache_path: Path | None) -> None:
                 "records": [_serialize_record(record) for record in records],
             }
             for file_path, (size, mtime_ns, records) in _CLAUDE_REQUEST_RECORDS_CACHE.items()
+        },
+        "claude_attribution": {
+            file_path: {
+                "size": size,
+                "mtime_ns": mtime_ns,
+                "events": [_serialize_record(event) for event in events],
+            }
+            for file_path, (size, mtime_ns, events) in _CLAUDE_ATTRIBUTION_EVENTS_CACHE.items()
         },
         "pi": {
             file_path: {
@@ -753,7 +799,336 @@ def parse_claude_request_records_cached(file_path: Path) -> list[dict[str, objec
 
     records = parse_claude_request_records(file_path)
     _CLAUDE_REQUEST_RECORDS_CACHE[cache_key] = (signature[0], signature[1], records)
+    _mark_persistent_cache_dirty()
     return records
+
+
+def extract_claude_message_texts(message: object) -> list[str]:
+    texts: list[str] = []
+    if isinstance(message, str):
+        texts.append(message)
+    elif isinstance(message, list):
+        for item in message:
+            if isinstance(item, dict):
+                text = item.get("text")
+                if isinstance(text, str):
+                    texts.append(text)
+            elif isinstance(item, str):
+                texts.append(item)
+    elif isinstance(message, dict):
+        content = message.get("content", "")
+        if isinstance(content, str):
+            texts.append(content)
+        elif isinstance(content, list):
+            for item in content:
+                if isinstance(item, dict):
+                    text = item.get("text")
+                    if isinstance(text, str):
+                        texts.append(text)
+                elif isinstance(item, str):
+                    texts.append(item)
+    return texts
+
+
+def normalize_claude_skill_name(value: object) -> str:
+    command = normalized_bucket_value(value, "")
+    if not command:
+        return ""
+    command = command.lstrip("/")
+    if not command or command in CLAUDE_BUILTIN_COMMANDS:
+        return ""
+    return f"/{command}"
+
+
+def add_claude_attribution_event(
+    events: list[dict[str, object]],
+    seen: set[tuple[str, str, str, str]],
+    *,
+    category: str,
+    name: str,
+    session_id: str,
+    timestamp: dt.datetime,
+    source_id: object = None,
+) -> None:
+    normalized_name = normalized_bucket_value(name, "")
+    if not normalized_name:
+        return
+    event_key = normalized_bucket_value(source_id, timestamp.isoformat())
+    dedupe_key = (category, normalized_name, session_id, event_key)
+    if dedupe_key in seen:
+        return
+    seen.add(dedupe_key)
+    events.append(
+        {
+            "category": category,
+            "name": normalized_name,
+            "session_id": session_id,
+            "timestamp": timestamp,
+        }
+    )
+
+
+def normalize_claude_tool_name(tool_name: object) -> str:
+    name = normalized_bucket_value(tool_name, "")
+    if name.startswith("mcp__"):
+        parts = name.split("__")
+        server = parts[1] if len(parts) > 1 and parts[1] else "unknown"
+        method = "__".join(part for part in parts[2:] if part)
+        return f"mcp:{server}/{method}" if method else f"mcp:{server}"
+    if name.startswith("plugin__") or name.startswith("extension__"):
+        parts = name.split("__")
+        namespace = parts[1] if len(parts) > 1 and parts[1] else "unknown"
+        method = "__".join(part for part in parts[2:] if part)
+        prefix = "extension" if name.startswith("extension__") else "plugin"
+        return f"{prefix}:{namespace}/{method}" if method else f"{prefix}:{namespace}"
+    return name
+
+
+def extract_claude_extension_names(event: dict[str, object]) -> list[str]:
+    names: list[str] = []
+    candidate_keys = (
+        "plugin",
+        "pluginName",
+        "plugin_name",
+        "pluginId",
+        "plugin_id",
+        "extension",
+        "extensionName",
+        "extension_name",
+        "extensionId",
+        "extension_id",
+    )
+
+    def append_candidate(value: object) -> None:
+        if isinstance(value, str):
+            normalized = normalized_bucket_value(value, "")
+        elif isinstance(value, dict):
+            normalized = normalized_bucket_value(
+                value.get("name") or value.get("id") or value.get("label") or value.get("source"),
+                "",
+            )
+        else:
+            normalized = ""
+        if normalized and normalized not in names:
+            names.append(normalized)
+
+    for key in candidate_keys:
+        append_candidate(event.get(key))
+
+    message = event.get("message")
+    if isinstance(message, dict):
+        for key in candidate_keys:
+            append_candidate(message.get(key))
+
+    return names
+
+
+def extension_name_from_tool_name(tool_name: str) -> str:
+    if not (tool_name.startswith("plugin__") or tool_name.startswith("extension__")):
+        return ""
+    parts = tool_name.split("__")
+    return normalized_bucket_value(parts[1] if len(parts) > 1 else "", "")
+
+
+def parse_claude_attribution_events(file_path: Path) -> list[dict[str, object]]:
+    session_scope = file_path.stem
+    events: list[dict[str, object]] = []
+    seen: set[tuple[str, str, str, str]] = set()
+
+    with file_path.open("r", encoding="utf-8", errors="ignore") as handle:
+        for line in handle:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                event = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if not isinstance(event, dict):
+                continue
+
+            timestamp = parse_timestamp_local(event.get("timestamp"))
+            if timestamp is None:
+                continue
+            session_id = normalized_bucket_value(event.get("sessionId"), session_scope)
+
+            for extension_name in extract_claude_extension_names(event):
+                add_claude_attribution_event(
+                    events,
+                    seen,
+                    category="plugin",
+                    name=extension_name,
+                    session_id=session_id,
+                    timestamp=timestamp,
+                    source_id=f"extension:{extension_name}:{timestamp.isoformat()}",
+                )
+
+            if event.get("type") == "user":
+                for text in extract_claude_message_texts(event.get("message")):
+                    for match in CLAUDE_COMMAND_MESSAGE_PATTERN.finditer(text):
+                        skill_name = normalize_claude_skill_name(match.group(1))
+                        if not skill_name:
+                            continue
+                        add_claude_attribution_event(
+                            events,
+                            seen,
+                            category="skill",
+                            name=skill_name,
+                            session_id=session_id,
+                            timestamp=timestamp,
+                            source_id=f"skill:{skill_name}:{timestamp.isoformat()}",
+                        )
+                        plugin_name = skill_name.lstrip("/").split(":", 1)[0] if ":" in skill_name else ""
+                        if plugin_name:
+                            add_claude_attribution_event(
+                                events,
+                                seen,
+                                category="plugin",
+                                name=plugin_name,
+                                session_id=session_id,
+                                timestamp=timestamp,
+                                source_id=f"plugin-command:{plugin_name}:{timestamp.isoformat()}",
+                            )
+
+            message = event.get("message")
+            if not isinstance(message, dict):
+                continue
+            content = message.get("content")
+            if not isinstance(content, list):
+                continue
+
+            for block in content:
+                if not isinstance(block, dict) or block.get("type") != "tool_use":
+                    continue
+                tool_name = normalized_bucket_value(block.get("name"), "")
+                if not tool_name:
+                    continue
+                tool_source_id = block.get("id") or f"tool:{tool_name}:{timestamp.isoformat()}"
+                add_claude_attribution_event(
+                    events,
+                    seen,
+                    category="tool",
+                    name=normalize_claude_tool_name(tool_name),
+                    session_id=session_id,
+                    timestamp=timestamp,
+                    source_id=tool_source_id,
+                )
+                tool_extension_name = extension_name_from_tool_name(tool_name)
+                if tool_extension_name:
+                    add_claude_attribution_event(
+                        events,
+                        seen,
+                        category="plugin",
+                        name=tool_extension_name,
+                        session_id=session_id,
+                        timestamp=timestamp,
+                        source_id=f"tool-extension:{tool_source_id}",
+                    )
+                if tool_name.startswith("mcp__"):
+                    parts = tool_name.split("__")
+                    server_name = parts[1] if len(parts) > 1 else "unknown"
+                    add_claude_attribution_event(
+                        events,
+                        seen,
+                        category="mcp_server",
+                        name=server_name,
+                        session_id=session_id,
+                        timestamp=timestamp,
+                        source_id=tool_source_id,
+                    )
+                elif tool_name in {"Agent", "Task"}:
+                    tool_input = block.get("input")
+                    if not isinstance(tool_input, dict):
+                        tool_input = {}
+                    agent_name = normalized_bucket_value(
+                        tool_input.get("subagent_type")
+                        or tool_input.get("subagentType")
+                        or tool_input.get("agent_type")
+                        or tool_input.get("agentType")
+                        or tool_input.get("agent")
+                        or tool_input.get("name"),
+                        "unknown-agent",
+                    )
+                    add_claude_attribution_event(
+                        events,
+                        seen,
+                        category="agent",
+                        name=agent_name,
+                        session_id=session_id,
+                        timestamp=timestamp,
+                        source_id=tool_source_id,
+                    )
+
+    return events
+
+
+def parse_claude_attribution_events_cached(file_path: Path) -> list[dict[str, object]]:
+    try:
+        stat = file_path.stat()
+    except OSError:
+        return []
+
+    cache_key = str(file_path)
+    cached = _CLAUDE_ATTRIBUTION_EVENTS_CACHE.get(cache_key)
+    signature = (stat.st_size, stat.st_mtime_ns)
+    if cached is not None and cached[:2] == signature:
+        return cached[2]
+
+    events = parse_claude_attribution_events(file_path)
+    _CLAUDE_ATTRIBUTION_EVENTS_CACHE[cache_key] = (signature[0], signature[1], events)
+    _mark_persistent_cache_dirty()
+    return events
+
+
+def apply_claude_session_attribution(
+    daily: DailyTotals,
+    events: list[dict[str, object]],
+    session_activity: dict[str, object],
+) -> None:
+    if not events:
+        return
+
+    grouped: Counter[tuple[str, str]] = Counter()
+    category_events: Counter[str] = Counter()
+    for event in events:
+        category = normalized_bucket_value(event.get("category"), "")
+        name = normalized_bucket_value(event.get("name"), "")
+        if not category or not name:
+            continue
+        grouped[(category, name)] += 1
+        category_events[category] += 1
+
+    if not grouped:
+        return
+
+    input_tokens = safe_non_negative_int(session_activity.get("input_tokens"))
+    output_tokens = safe_non_negative_int(session_activity.get("output_tokens"))
+    cached_tokens = safe_non_negative_int(session_activity.get("cached_tokens"))
+    total_tokens = safe_non_negative_int(session_activity.get("total_tokens"))
+    input_cost_usd = float(session_activity.get("input_cost_usd") or 0.0)
+    output_cost_usd = float(session_activity.get("output_cost_usd") or 0.0)
+    cached_cost_usd = float(session_activity.get("cached_cost_usd") or 0.0)
+    total_cost_usd = float(session_activity.get("total_cost_usd") or 0.0)
+    cost_complete = bool(session_activity.get("cost_complete", True))
+
+    for (category, name), event_count in grouped.items():
+        category_count = max(category_events[category], 1)
+        share = event_count / category_count
+        daily.add_attribution(
+            category=category,
+            name=name,
+            sessions=1,
+            events=event_count,
+            input_tokens=round(input_tokens * share),
+            output_tokens=round(output_tokens * share),
+            cached_tokens=round(cached_tokens * share),
+            total_tokens=round(total_tokens * share),
+            input_cost_usd=input_cost_usd * share,
+            output_cost_usd=output_cost_usd * share,
+            cached_cost_usd=cached_cost_usd * share,
+            total_cost_usd=total_cost_usd * share,
+            cost_complete=cost_complete,
+        )
 
 
 def collect_claude_usage_data(
@@ -767,8 +1142,16 @@ def collect_claude_usage_data(
 
     catalog = pricing_catalog or PricingCatalog.from_file(None)
     request_usage: dict[tuple[str, str], dict[str, object]] = {}
+    attribution_events_by_session_date: dict[tuple[dt.date, str], list[dict[str, object]]] = defaultdict(list)
 
     for file_path in iter_jsonl_files(claude_projects_root):
+        for attribution_event in parse_claude_attribution_events_cached(file_path):
+            timestamp = attribution_event.get("timestamp")
+            if not isinstance(timestamp, dt.datetime):
+                continue
+            session_id = normalized_bucket_value(attribution_event.get("session_id"), file_path.stem)
+            attribution_events_by_session_date[(timestamp.date(), session_id)].append(attribution_event)
+
         for record in parse_claude_request_records_cached(file_path):
             session_id = normalized_bucket_value(record.get("session_id"), file_path.stem)
             request_id = normalized_bucket_value(record.get("request_id"), "")
@@ -889,6 +1272,17 @@ def collect_claude_usage_data(
             session_activity["cached_cost_usd"] = float(session_activity.get("cached_cost_usd") or 0.0) + priced.cached_cost_usd
             session_activity["total_cost_usd"] = float(session_activity.get("total_cost_usd") or 0.0) + priced.total_cost_usd
             session_activity["cost_complete"] = bool(session_activity.get("cost_complete", True)) and priced.cost_complete
+
+    for session_key, session_activity in daily_session_usage.items():
+        usage_date, session_id = session_key
+        daily = totals.get(usage_date)
+        if daily is None:
+            continue
+        apply_claude_session_attribution(
+            daily,
+            attribution_events_by_session_date.get((usage_date, session_id), []),
+            session_activity,
+        )
 
     for usage_date, sessions in daily_sessions.items():
         if usage_date in totals:

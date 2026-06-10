@@ -105,8 +105,8 @@ def compute_range_dates(
         dated_rows = [parse_iso_date(row.get("date"), today) for row in rows]
         start_date = min(dated_rows) if dated_rows else today
     else:
-        start_date = today - dt.timedelta(days=today.isoweekday() - 1)
-        preset = "wtd"
+        start_date = today.replace(day=1)
+        preset = "mtd"
     return start_date, end_date, range_label_for_preset(preset)
 
 
@@ -183,7 +183,7 @@ def build_tmux_status_snapshot(
     timings_ms: dict[str, Any] | None = None,
     *,
     scope: str = "combined",
-    range_preset: str = "wtd",
+    range_preset: str = "mtd",
     now: dt.datetime | None = None,
     base_health: str = "ok",
 ) -> Snapshot:
@@ -425,7 +425,7 @@ def render_tmux_status(
             return "AI unavailable"
         return tmux_style("AI", fg=AI_COLOR, bold=True) + " " + tmux_style("unavailable", fg=UNAVAILABLE_COLOR, bold=True)
 
-    range_preset = str((snapshot.get("range") or {}).get("preset") or "wtd").strip().lower()
+    range_preset = str((snapshot.get("range") or {}).get("preset") or "mtd").strip().lower()
     range_short = range_short_for_preset(range_preset)
     today_input_tokens = format_tokens_short(metrics.get("today_input_tokens") or 0)
     today_output_tokens = format_tokens_short(metrics.get("today_output_tokens") or 0)
