@@ -33,6 +33,12 @@ BUILTIN_RATE_CARD = {
                 "cache_read_per_million": 0.3,
                 "cache_write_per_million": 3.75,
             },
+            "claude-fable-5": {
+                "input_per_million": 3.0,
+                "output_per_million": 15.0,
+                "cache_read_per_million": 0.3,
+                "cache_write_per_million": 3.75,
+            },
             "claude-haiku-4": {
                 "input_per_million": 0.8,
                 "output_per_million": 4.0,
@@ -136,6 +142,15 @@ class PricingCatalog:
 
         rates = self.resolve_rates(provider, model)
         if rates is None:
+            if uncached_input_tokens == 0 and output_tokens == 0 and cache_read_tokens == 0 and cache_write_tokens == 0:
+                return CostBreakdown(
+                    input_cost_usd=0.0,
+                    output_cost_usd=0.0,
+                    cached_cost_usd=0.0,
+                    total_cost_usd=0.0,
+                    cost_complete=True,
+                    source="zero-usage",
+                )
             self._warnings.add((provider, model))
             return CostBreakdown(
                 input_cost_usd=0.0,

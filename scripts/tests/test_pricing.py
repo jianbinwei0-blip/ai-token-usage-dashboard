@@ -46,6 +46,43 @@ class PricingTests(unittest.TestCase):
         self.assertAlmostEqual(priced.cached_cost_usd, 0.000084)
         self.assertAlmostEqual(priced.total_cost_usd, 0.002769)
 
+    def test_claude_fable_pricing_uses_sonnet_family_rate(self) -> None:
+        catalog = PricingCatalog.from_file(None)
+
+        priced = catalog.price_usage(
+            "claude",
+            "claude-fable-5",
+            uncached_input_tokens=10,
+            output_tokens=177,
+            cache_read_tokens=30,
+            cache_write_tokens=20,
+        )
+
+        self.assertTrue(priced.cost_complete)
+        self.assertEqual(priced.source, "derived")
+        self.assertAlmostEqual(priced.input_cost_usd, 0.00003)
+        self.assertAlmostEqual(priced.output_cost_usd, 0.002655)
+        self.assertAlmostEqual(priced.cached_cost_usd, 0.000084)
+        self.assertAlmostEqual(priced.total_cost_usd, 0.002769)
+        self.assertEqual(catalog.warnings(), [])
+
+    def test_unmapped_zero_usage_is_complete_zero_cost(self) -> None:
+        catalog = PricingCatalog.from_file(None)
+
+        priced = catalog.price_usage(
+            "claude",
+            "<synthetic>",
+            uncached_input_tokens=0,
+            output_tokens=0,
+            cache_read_tokens=0,
+            cache_write_tokens=0,
+        )
+
+        self.assertTrue(priced.cost_complete)
+        self.assertEqual(priced.source, "zero-usage")
+        self.assertEqual(priced.total_cost_usd, 0.0)
+        self.assertEqual(catalog.warnings(), [])
+
     def test_pi_native_cost_passthrough_is_preferred(self) -> None:
         catalog = PricingCatalog.from_file(None)
 
