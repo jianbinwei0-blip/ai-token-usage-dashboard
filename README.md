@@ -17,13 +17,14 @@ Supports Codex, Claude, and PI Coding Agent.
 - Range-scoped breakdown table grouped by `Agent CLI` + `Model`, including cost totals
 - Horizontal bar chart (with rank, total tokens, and session count) above the table
 - Auto-recalc on browser refresh and every 5 minutes via local `localhost` endpoint
-- Compact tmux status rendering for Today/MTD input, output, total-token, and cost pulse via `scripts/render_tmux_status.py`, aligned to 5-minute refresh boundaries
+- Compact tmux status rendering for Today/MTD total tokens, MTD cost, and ChatGPT subscription quota/reset information via `scripts/render_tmux_status.py`, aligned to 5-minute refresh boundaries
 
 ## Project Structure
 
 - `dashboard/index.html`: Dashboard UI
 - `scripts/ai_usage_recalc_server.py`: Thin local HTTP recalc service (`/health`, `/recalc`)
 - `scripts/dashboard_core/config.py`: Runtime config/env resolution
+- `scripts/dashboard_core/chatgpt_subscription.py`: Credential-safe Codex app-server adapter for ChatGPT plan and quota data
 - `scripts/dashboard_core/collectors.py`: Codex/Claude/PI usage ingestion
 - `scripts/dashboard_core/aggregation.py`: Daily aggregation + date window logic
 - `scripts/dashboard_core/render.py`: HTML rewrite + dataset injection
@@ -41,6 +42,7 @@ Supports Codex, Claude, and PI Coding Agent.
 - macOS or Linux
 - Python 3.9+
 - Local Codex session logs in `~/.codex/sessions`
+- Codex CLI signed in with ChatGPT for subscription quota display (optional; token and cost status still works without it)
 - Local Claude project logs in `~/.claude/projects` (optional; dashboard still works without Claude data)
 - Local PI agent state in `~/.pi/agent` (optional; dashboard still works without PI data)
 
@@ -77,29 +79,38 @@ Environment variables:
 - `AI_USAGE_DASHBOARD_HTML` (default via `scripts/run_local.sh`: `<repo>/tmp/index.runtime.html`, seeded from `<repo>/dashboard/index.html`)
 - `AI_USAGE_PRICING_FILE` (optional JSON rate-card override file merged over the built-in pricing table)
 - `AI_USAGE_RECALC_LOG_FILE` (optional JSONL file for persistent `/recalc` timing/error logs; default: `<repo>/tmp/recalc_timings.jsonl`)
+- `AI_USAGE_CHATGPT_USAGE` (`auto` or `off`; default: `auto`)
+- `AI_USAGE_CODEX_BIN` (Codex executable used for the app-server account API; default: `codex`)
+- `AI_USAGE_CHATGPT_TIMEOUT_SECONDS` (overall account/quota request timeout; default: `3`)
 
 ## Tmux Status Line
 
 You can surface a compact AI usage pulse directly in tmux.
 
-Current compact format:
+Compact ChatGPT subscription format at the recommended 96-character budget:
 
 ```text
-AI ok · T I 4.2M O 1.1M Σ 5.3M · MTD I 210.3M O 37.4M Σ 247.7M · MTD $227 · 08:50→08:55
+GPT Pro · 5h 72% ↻14:35 · 7d 61% ↻Fri 09:00 · Today 13.3M · MTD 934.7M · $753
 ```
 
 Where:
-- `T` = today, `MTD` = month to date
-- `I`/`O`/`Σ` = input, output, and total tokens
-- trailing left time = last successful refresh time
-- trailing right time = next aligned 5-minute refresh boundary
+- `GPT Pro` is the detected ChatGPT plan; it is omitted for API-key, Bedrock, signed-out, or disabled account usage
+- `5h` and `7d` are the primary and weekly Codex quota windows, expressed as percent remaining
+- `↻` shows each quota's reset in local time; both reset times remain visible in the normal 96-character presentation
+- `Today` and `MTD` are total tokens; input/output details are intentionally omitted
+- the amount after the MTD token total is the locally derived month-to-date cost estimate, not an additional ChatGPT subscription charge
+- middle dots consistently separate plan, quota, token, and cost values
+- healthy status text is omitted; `partial`, `stale`, or `error` appears only when attention is needed
 
 ### How it works
 
 - tmux redraws the status every few seconds
 - `scripts/render_tmux_status.py` only recalculates when crossing a 5-minute boundary (`:00`, `:05`, `:10`, ...)
-- the status renderer caches the last snapshot in `tmp/tmux_status.json`
-- if no provider roots are available, it falls back to `AI unavailable`
+- in `auto` mode, the renderer uses the stable Codex app-server `account/read` and `account/rateLimits/read` methods; it never reads OAuth credentials directly
+- the status renderer caches normalized local metrics and quota data in `tmp/tmux_status.json`
+- a quota request has a hard timeout; the last successful quota remains visible as stale data without breaking token/cost status
+- a more constrained named model quota is added only when it is tighter than the general Codex quota
+- if neither provider data nor a usable ChatGPT quota is available, it falls back to `AI unavailable`
 
 ### Toggle in tmux
 
@@ -113,6 +124,12 @@ Example command to preview the segment outside tmux:
 
 ```bash
 python3 scripts/render_tmux_status.py --refresh-interval-minutes 5 --max-width 96
+```
+
+Disable ChatGPT account lookups while retaining total tokens and MTD cost:
+
+```bash
+python3 scripts/render_tmux_status.py --chatgpt-usage off --max-width 96
 ```
 
 ## Optional: Run as LaunchAgent (macOS)
@@ -145,6 +162,7 @@ curl http://127.0.0.1:8765/health
 - Daily rows in the injected dataset include `sessions`, `input_tokens`, `output_tokens`, `cached_tokens`, `total_tokens`, `input_cost_usd`, `output_cost_usd`, `cached_cost_usd`, `total_cost_usd`, `cost_complete`, and `breakdown_rows` grouped by `(agent_cli, model)`.
 - A built-in versioned pricing table is used for derived Codex and Claude costs, and can be overridden via `AI_USAGE_PRICING_FILE`.
 - Codex usage keeps the latest `token_count` snapshot per session, extracts `originator`/`source` for the CLI bucket, uses the latest observed `turn_context.payload.model` when present, and prices uncached input separately from cached tokens.
+- ChatGPT subscription status is fetched through the Codex app server, and only normalized plan/quota/reset/credit metadata is cached. Email addresses, account IDs, and OAuth tokens are neither returned nor persisted by the dashboard.
 - Claude request usage is deduplicated by `(sessionId, requestId)`, keeps the highest observed token values for the request, computes `cached_tokens = cache_creation_input_tokens + cache_read_input_tokens`, and derives cost from the model rate card.
 - Claude-style context attribution is extracted when transcript events expose it: Skills from `<command-message>` slash commands, Agents/Subagents from `Agent`/`Task` tool calls, MCP servers from `mcp__server__method` tools, Tools from `tool_use` blocks, and Plugins / Extensions from namespaced slash commands plus plugin/extension metadata or tool namespaces. Attribution token/cost shares are estimated from the session totals for matching transcript events.
 - PI usage is read from `~/.pi/agent/sessions/**/*.jsonl`, tracks the active model via `model_change` events, computes `cached_tokens = cacheRead + cacheWrite`, prefers native `message.usage.cost.*` when present, and resumes parsing from the last verified byte offset when a session log grows append-only.

@@ -10,14 +10,20 @@ from dashboard_core.tmux_status import (  # noqa: E402
     build_tmux_status_snapshot,
     effective_health,
     format_age_short,
+    format_chatgpt_plan,
     format_next_refresh_time,
+    format_quota_reset_time,
     format_recalc_short,
     format_refresh_time,
     format_tokens_short,
     format_usd_short,
     render_tmux_status,
+    subscription_effective_state,
 )
-from render_tmux_status import parse_args as parse_tmux_status_args  # noqa: E402
+from render_tmux_status import (  # noqa: E402
+    parse_args as parse_tmux_status_args,
+    refresh_subscription_snapshot,
+)
 
 
 class TmuxStatusTests(unittest.TestCase):
@@ -32,7 +38,10 @@ class TmuxStatusTests(unittest.TestCase):
 
     def test_default_status_range_is_month_to_date(self) -> None:
         with mock.patch.object(sys, "argv", ["render_tmux_status.py"]):
-            self.assertEqual(parse_tmux_status_args().range_preset, "mtd")
+            args = parse_tmux_status_args()
+            self.assertEqual(args.range_preset, "mtd")
+            self.assertEqual(args.chatgpt_usage, "auto")
+            self.assertEqual(args.codex_bin, "codex")
 
         dataset_payload = {
             "generated_at": "2026-04-21T15:04:00+00:00",
@@ -131,7 +140,7 @@ class TmuxStatusTests(unittest.TestCase):
         self.assertEqual(snapshot["health"], "partial")
         self.assertEqual(snapshot["providers"], ["codex", "claude", "pi"])
         self.assertEqual(snapshot["range"]["preset"], "wtd")
-        self.assertEqual(snapshot["version"], 2)
+        self.assertEqual(snapshot["version"], 3)
         self.assertEqual(snapshot["metrics"]["today_tokens"], 90_189_559)
         self.assertEqual(snapshot["metrics"]["today_input_tokens"], 40_000_000)
         self.assertEqual(snapshot["metrics"]["today_output_tokens"], 10_000_000)
@@ -203,7 +212,7 @@ class TmuxStatusTests(unittest.TestCase):
 
         self.assertEqual(
             render_tmux_status(base_snapshot, now=now),
-            "AI ok · T I 40M O 10M Σ 90.2M · MTD I 250M O 62.4M Σ 562.4M · MTD $13.4k · 15:04 → 15:05",
+            "AI · Today 90.2M · MTD 562.4M · $13.4k · 15:04 → 15:05",
         )
 
         partial_snapshot = {
@@ -213,7 +222,7 @@ class TmuxStatusTests(unittest.TestCase):
         }
         self.assertEqual(
             render_tmux_status(partial_snapshot, now=now),
-            "AI partial · T I 40M O 10M Σ 90.2M · MTD I 250M O 62.4M Σ 562.4M · MTD $13.4k* · 15:04 → 15:05",
+            "AI partial · Today 90.2M · MTD 562.4M · $13.4k* · 15:04 → 15:05",
         )
 
         borderline_snapshot = {**base_snapshot, "generated_at": "2026-04-21T15:00:00+00:00"}
@@ -224,25 +233,186 @@ class TmuxStatusTests(unittest.TestCase):
         self.assertEqual(effective_health(stale_snapshot, now=stale_now), "stale")
         self.assertEqual(
             render_tmux_status(stale_snapshot, now=stale_now),
-            "AI stale · T I 40M O 10M Σ 90.2M · MTD I 250M O 62.4M Σ 562.4M · MTD $13.4k · 15:00 → 15:05",
+            "AI stale · Today 90.2M · MTD 562.4M · $13.4k · 15:00 → 15:05",
         )
 
         error_snapshot = {**base_snapshot, "health": "error"}
         self.assertEqual(render_tmux_status(error_snapshot, now=now), "AI error · 15:04 → 15:05")
         styled = render_tmux_status(base_snapshot, now=now, use_tmux_style=True)
         self.assertIn("#[fg=#58A6FF,bold]AI#[default]", styled)
-        self.assertIn("#[fg=#7EE787,bold]ok#[default]", styled)
-        self.assertIn("#[fg=#E6EDF3,bold]40M#[default]", styled)
-        self.assertIn("#[fg=#E6EDF3,bold]10M#[default]", styled)
-        self.assertIn("#[fg=#1F2328,bg=#F2CC60,bold]90.2M#[default]", styled)
-        self.assertIn("#[fg=#79C0FF,bold]250M#[default]", styled)
-        self.assertIn("#[fg=#79C0FF,bold]62.4M#[default]", styled)
-        self.assertIn("#[fg=#1F2328,bg=#F2CC60,bold]562.4M#[default]", styled)
-        self.assertIn("#[fg=#8B949E]MTD#[default] #[fg=#7EE787,bold]$13.4k#[default]", styled)
+        self.assertNotIn("#[fg=#7EE787,bold]ok#[default]", styled)
+        self.assertIn("#[fg=#E6EDF3,bold]90.2M#[default]", styled)
+        self.assertIn("#[fg=#79C0FF,bold]562.4M#[default]", styled)
+        self.assertNotIn(" I ", render_tmux_status(base_snapshot, now=now))
+        self.assertNotIn(" O ", render_tmux_status(base_snapshot, now=now))
+        self.assertIn("#[fg=#8B949E]MTD#[default] #[fg=#79C0FF,bold]562.4M#[default]", styled)
+        self.assertIn("#[fg=#7EE787,bold]$13.4k#[default]", styled)
         self.assertIn("#[fg=#E6EDF3]15:04#[default]", styled)
         self.assertIn("#[fg=#79C0FF]15:05#[default]", styled)
         unavailable = render_tmux_status({"providers": []}, use_tmux_style=True)
         self.assertIn("unavailable", unavailable)
+
+    def test_render_chatgpt_quota_with_total_tokens_and_mtd_cost(self) -> None:
+        now = dt.datetime(2026, 4, 21, 15, 5, tzinfo=dt.timezone.utc)
+        primary_reset = int(dt.datetime(2026, 4, 21, 18, 0, tzinfo=dt.timezone.utc).timestamp())
+        weekly_reset = int(dt.datetime(2026, 4, 24, 9, 0, tzinfo=dt.timezone.utc).timestamp())
+        subscription = {
+            "version": 1,
+            "state": "ok",
+            "fetched_at": "2026-04-21T15:04:00+00:00",
+            "account_type": "chatgpt",
+            "plan": "prolite",
+            "limits": [
+                {
+                    "id": "codex",
+                    "name": None,
+                    "primary": {
+                        "remaining_percent": 88,
+                        "window_duration_minutes": 300,
+                        "resets_at": primary_reset,
+                    },
+                    "secondary": {
+                        "remaining_percent": 83,
+                        "window_duration_minutes": 10_080,
+                        "resets_at": weekly_reset,
+                    },
+                    "credits": None,
+                    "rate_limit_reached_type": None,
+                }
+            ],
+        }
+        snapshot = {
+            "generated_at": "2026-04-21T15:04:00+00:00",
+            "health": "ok",
+            "scope": "combined",
+            "providers": ["codex"],
+            "range": {"preset": "mtd"},
+            "metrics": {
+                "today_tokens": 90_189_559,
+                "range_tokens": 562_382_364,
+                "range_cost_usd": 13_425.03,
+            },
+            "quality": {"pricing_complete": True},
+            "subscription": subscription,
+        }
+
+        self.assertEqual(format_chatgpt_plan("prolite"), "Pro Lite")
+        self.assertEqual(format_quota_reset_time(primary_reset, now=now), "18:00")
+        self.assertEqual(format_quota_reset_time(weekly_reset, now=now), "Fri 09:00")
+        self.assertEqual(format_quota_reset_time(weekly_reset, now=now, compact=True), "Fri")
+        self.assertEqual(subscription_effective_state(subscription, now=now), "ok")
+        self.assertEqual(
+            render_tmux_status(snapshot, now=now),
+            "GPT Pro Lite · 5h 88% left ↻18:00 · Weekly 83% left ↻Fri 09:00 · Today 90.2M · MTD 562.4M · $13.4k · 15:04 → 15:05",
+        )
+
+        compact = render_tmux_status(snapshot, now=now, max_width=96)
+        self.assertEqual(
+            compact,
+            "GPT Pro Lite · 5h 88% ↻18:00 · 7d 83% ↻Fri 09:00 · Today 90.2M · MTD 562.4M · $13.4k",
+        )
+        self.assertLessEqual(len(compact), 96)
+        self.assertIn("5h 88% ↻18:00", compact)
+        self.assertIn("7d 83% ↻Fri 09:00", compact)
+        self.assertNotIn(" I ", compact)
+        self.assertNotIn(" O ", compact)
+        styled = render_tmux_status(snapshot, now=now, max_width=96, use_tmux_style=True)
+        self.assertIn("#[fg=#7EE787,bold]GPT#[default]", styled)
+        self.assertIn("#[fg=#7EE787,bold]88%#[default]", styled)
+        self.assertIn("#[fg=#7EE787,bold]$13.4k#[default]", styled)
+
+        low_limit = {
+            **subscription["limits"][0],
+            "primary": {**subscription["limits"][0]["primary"], "remaining_percent": 40},
+        }
+        low_subscription = {**subscription, "limits": [low_limit]}
+        low_output = render_tmux_status({**snapshot, "subscription": low_subscription}, now=now, max_width=96)
+        self.assertIn("5h 40% ↻18:00", low_output)
+
+        credited_limit = {
+            **subscription["limits"][0],
+            "credits": {"has_credits": True, "unlimited": False, "balance": "25.4"},
+        }
+        credited_subscription = {**subscription, "limits": [credited_limit]}
+        credited = render_tmux_status({**snapshot, "subscription": credited_subscription}, now=now, max_width=96)
+        self.assertIn("Cr 25", credited)
+        self.assertIn("MTD 562.4M · $13.4k", credited)
+
+        stale_subscription = {**subscription, "fetched_at": "2026-04-21T14:40:00+00:00"}
+        self.assertEqual(subscription_effective_state(stale_subscription, now=now), "stale")
+        stale_output = render_tmux_status({**snapshot, "subscription": stale_subscription}, now=now, max_width=96)
+        self.assertIn("GPT Pro Lite stale", stale_output)
+
+    def test_render_includes_only_a_more_constrained_named_quota(self) -> None:
+        now = dt.datetime(2026, 4, 21, 15, 5, tzinfo=dt.timezone.utc)
+        reset = int(dt.datetime(2026, 4, 21, 19, 0, tzinfo=dt.timezone.utc).timestamp())
+        canonical = {
+            "id": "codex",
+            "primary": {"remaining_percent": 88, "window_duration_minutes": 300, "resets_at": reset},
+            "secondary": {"remaining_percent": 83, "window_duration_minutes": 10_080, "resets_at": reset},
+            "rate_limit_reached_type": None,
+        }
+        named = {
+            "id": "codex_spark",
+            "name": "GPT-5.3-Codex-Spark",
+            "primary": {"remaining_percent": 60, "window_duration_minutes": 300, "resets_at": reset},
+            "secondary": None,
+            "rate_limit_reached_type": None,
+        }
+        snapshot = {
+            "generated_at": "2026-04-21T15:04:00+00:00",
+            "health": "ok",
+            "scope": "combined",
+            "providers": ["codex"],
+            "range": {"preset": "mtd"},
+            "metrics": {"today_tokens": 100, "range_tokens": 200, "range_cost_usd": 3},
+            "quality": {"pricing_complete": True},
+            "subscription": {
+                "state": "ok",
+                "fetched_at": "2026-04-21T15:04:00+00:00",
+                "account_type": "chatgpt",
+                "plan": "plus",
+                "limits": [canonical, named],
+            },
+        }
+
+        output = render_tmux_status(snapshot, now=now, max_width=96)
+        self.assertIn("Spark 5h 60%", output)
+        self.assertIn("MTD 200 · $3", output)
+        self.assertLessEqual(len(output), 96)
+
+        unconstrained_named = {
+            **named,
+            "primary": {"remaining_percent": 100, "window_duration_minutes": 300, "resets_at": reset},
+        }
+        unconstrained = {
+            **snapshot,
+            "subscription": {**snapshot["subscription"], "limits": [canonical, unconstrained_named]},
+        }
+        self.assertNotIn("Spark", render_tmux_status(unconstrained, now=now, max_width=96))
+
+    def test_subscription_refresh_uses_stale_last_good_data_after_failure(self) -> None:
+        previous_subscription = {
+            "version": 1,
+            "state": "ok",
+            "fetched_at": "2026-04-21T15:00:00+00:00",
+            "account_type": "chatgpt",
+            "plan": "plus",
+            "limits": [{"id": "codex", "primary": {"remaining_percent": 75}}],
+        }
+        attempted_at = dt.datetime(2026, 4, 21, 15, 10, tzinfo=dt.timezone.utc)
+        with mock.patch("render_tmux_status.fetch_chatgpt_subscription_usage", side_effect=RuntimeError("offline")):
+            fallback = refresh_subscription_snapshot(
+                {"subscription": previous_subscription},
+                codex_binary="codex",
+                timeout_seconds=1,
+                now=attempted_at,
+            )
+
+        self.assertEqual(fallback["state"], "stale")
+        self.assertEqual(fallback["fetched_at"], "2026-04-21T15:00:00+00:00")
+        self.assertEqual(fallback["last_attempted_at"], "2026-04-21T15:10:00+00:00")
+        self.assertNotIn("offline", str(fallback))
 
     def test_age_formatter(self) -> None:
         now = dt.datetime(2026, 4, 21, 15, 5, tzinfo=dt.timezone.utc)

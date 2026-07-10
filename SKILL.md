@@ -18,6 +18,7 @@ Primary files:
 - `scripts/ai_usage_recalc_server.py`: `/health` and `/recalc` HTTP entrypoint
 - `scripts/dashboard_core/pipeline.py`: recalc orchestration logic
 - `scripts/dashboard_core/collectors.py`: provider ingestion
+- `scripts/dashboard_core/chatgpt_subscription.py`: ChatGPT plan and Codex quota lookup through the Codex app server
 - `scripts/dashboard_core/aggregation.py`: date windows and summaries
 - `scripts/dashboard_core/render.py`: HTML rewrite and embedded dataset output
 - `scripts/run_local.sh`: local launcher
@@ -32,6 +33,8 @@ Primary files:
   - `curl -s http://127.0.0.1:8765/recalc`
 - Open dashboard:
   - `open http://127.0.0.1:8765/`
+- Preview tmux status with ChatGPT quota, total tokens, and MTD cost:
+  - `python3 scripts/render_tmux_status.py --max-width 96`
 
 ## Working Workflow
 
@@ -61,6 +64,9 @@ Primary files:
   - `AI_USAGE_CLAUDE_PROJECTS_ROOT`
   - `AI_USAGE_PI_AGENT_ROOT`
   - `AI_USAGE_DASHBOARD_HTML`
+  - `AI_USAGE_CHATGPT_USAGE` (`auto` or `off`)
+  - `AI_USAGE_CODEX_BIN`
+  - `AI_USAGE_CHATGPT_TIMEOUT_SECONDS`
 
 ## Guardrails
 

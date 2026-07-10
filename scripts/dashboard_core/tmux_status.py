@@ -20,10 +20,12 @@ SCOPE_COLOR = "#A5D6FF"
 MUTED_COLOR = "#8B949E"
 TODAY_VALUE_COLOR = "#E6EDF3"
 RANGE_VALUE_COLOR = "#79C0FF"
-TOTAL_TOKEN_HIGHLIGHT_FG = "#1F2328"
-TOTAL_TOKEN_HIGHLIGHT_BG = "#F2CC60"
 COST_OK_COLOR = "#7EE787"
 UNAVAILABLE_COLOR = "#F2CC60"
+CHATGPT_COLOR = "#7EE787"
+QUOTA_GOOD_COLOR = "#7EE787"
+QUOTA_WARNING_COLOR = "#F2CC60"
+QUOTA_CRITICAL_COLOR = "#FF7B72"
 
 
 def _to_utc(now: dt.datetime | None) -> dt.datetime:
@@ -216,7 +218,7 @@ def build_tmux_status_snapshot(
         health = "ok"
 
     snapshot: Snapshot = {
-        "version": 2,
+        "version": 3,
         "generated_at": generated_at.isoformat(),
         "health": health,
         "scope": scope,
@@ -394,6 +396,358 @@ def tmux_style(text: str, *, fg: str | None = None, bg: str | None = None, bold:
     return f"#[{','.join(parts)}]{text}#[default]"
 
 
+def format_chatgpt_plan(plan: Any) -> str:
+    normalized = str(plan or "").strip().lower()
+    labels = {
+        "free": "Free",
+        "go": "Go",
+        "plus": "Plus",
+        "pro": "Pro",
+        "prolite": "Pro Lite",
+        "team": "Team",
+        "self_serve_business_usage_based": "Business",
+        "business": "Business",
+        "enterprise_cbp_usage_based": "Enterprise",
+        "enterprise": "Enterprise",
+        "edu": "Edu",
+    }
+    if normalized in labels:
+        return labels[normalized]
+    if not normalized or normalized == "unknown":
+        return ""
+    return " ".join(part.capitalize() for part in normalized.replace("-", "_").split("_") if part)
+
+
+def subscription_effective_state(
+    subscription: Any,
+    now: dt.datetime | None = None,
+    *,
+    stale_minutes: int = 15,
+) -> str:
+    if not isinstance(subscription, dict):
+        return "not_applicable"
+    if str(subscription.get("account_type") or "").strip().lower() != "chatgpt":
+        return "not_applicable"
+
+    state = str(subscription.get("state") or "unavailable").strip().lower()
+    if state == "not_applicable":
+        return state
+    if state not in {"ok", "stale", "unavailable"}:
+        return "unavailable"
+    if state != "ok":
+        return state
+
+    fetched_at = parse_iso_datetime(str(subscription.get("fetched_at") or ""))
+    if fetched_at is None:
+        return "stale"
+    if (_to_utc(now) - fetched_at).total_seconds() > max(60, stale_minutes * 60):
+        return "stale"
+    return "ok"
+
+
+def format_quota_reset_time(
+    resets_at: Any,
+    now: dt.datetime | None = None,
+    *,
+    compact: bool = False,
+) -> str:
+    try:
+        reset_epoch = int(resets_at)
+    except (TypeError, ValueError, OverflowError):
+        return ""
+    if reset_epoch <= 0:
+        return ""
+
+    reference = now or dt.datetime.now().astimezone()
+    if reference.tzinfo is None:
+        reference = reference.astimezone()
+    try:
+        reset = dt.datetime.fromtimestamp(reset_epoch, tz=dt.timezone.utc).astimezone(reference.tzinfo)
+    except (OSError, OverflowError, ValueError):
+        return ""
+    if reset <= reference:
+        return "now"
+
+    day_delta = (reset.date() - reference.date()).days
+    if day_delta == 0:
+        return reset.strftime("%H:%M")
+    if day_delta < 7:
+        return reset.strftime("%a") if compact else reset.strftime("%a %H:%M")
+    if reset.year == reference.year:
+        date_label = f"{reset.strftime('%b')} {reset.day}"
+        return date_label.replace(" ", "") if compact else f"{date_label} {reset.strftime('%H:%M')}"
+    return reset.strftime("%Y-%m-%d")
+
+
+def _quota_window_labels(duration_minutes: Any, kind: str) -> tuple[str, str]:
+    try:
+        minutes = int(duration_minutes)
+    except (TypeError, ValueError, OverflowError):
+        minutes = 0
+    if minutes == 300:
+        return "5h", "5h"
+    if minutes == 10_080:
+        return "Weekly", "7d"
+    if minutes > 0 and minutes % 1_440 == 0:
+        label = f"{minutes // 1_440}d"
+        return label, label
+    if minutes > 0 and minutes % 60 == 0:
+        label = f"{minutes // 60}h"
+        return label, label
+    if minutes > 0:
+        label = f"{minutes}m"
+        return label, label
+    return ("Usage", "U") if kind == "primary" else ("Secondary", "S")
+
+
+def _quota_remaining(window: Any) -> int | None:
+    if not isinstance(window, dict):
+        return None
+    try:
+        return max(0, min(100, int(window.get("remaining_percent"))))
+    except (TypeError, ValueError, OverflowError):
+        return None
+
+
+def _quota_color(remaining: int, *, stale: bool, reached: bool) -> str:
+    if stale:
+        return HEALTH_COLORS["stale"]
+    if reached or remaining <= 20:
+        return QUOTA_CRITICAL_COLOR
+    if remaining <= 50:
+        return QUOTA_WARNING_COLOR
+    return QUOTA_GOOD_COLOR
+
+
+def _short_limit_name(value: Any) -> str:
+    text = str(value or "").strip().replace("_", "-")
+    parts = [part for part in text.split("-") if part]
+    candidate = parts[-1] if parts else text
+    if not candidate:
+        return "Model"
+    if candidate.islower():
+        candidate = candidate.capitalize()
+    return candidate[:12]
+
+
+def _quota_segment(
+    window: dict[str, Any],
+    kind: str,
+    *,
+    now: dt.datetime | None,
+    stale: bool,
+    reached: bool,
+    prefix: str = "",
+    compact: bool,
+    include_reset: bool,
+) -> tuple[str, str] | None:
+    remaining = _quota_remaining(window)
+    if remaining is None:
+        return None
+    full_label, compact_label = _quota_window_labels(window.get("window_duration_minutes"), kind)
+    label = compact_label if compact else full_label
+    if prefix:
+        label = f"{prefix} {label}"
+    reset = format_quota_reset_time(window.get("resets_at"), now, compact=False)
+    remaining_text = f"{remaining}%" if compact else f"{remaining}% left"
+    if reached:
+        remaining_text += "!"
+    plain = f"{label} {remaining_text}"
+    if include_reset and reset:
+        plain += f" ↻{reset}"
+
+    color = _quota_color(remaining, stale=stale, reached=reached)
+    styled = tmux_style(label, fg=MUTED_COLOR) + " " + tmux_style(remaining_text, fg=color, bold=True)
+    if include_reset and reset:
+        styled += tmux_style(" ↻", fg=MUTED_COLOR) + tmux_style(reset, fg=RANGE_VALUE_COLOR)
+    return plain, styled
+
+
+def _subscription_render_segments(
+    subscription: Any,
+    now: dt.datetime | None,
+) -> dict[str, list[tuple[str, str]]]:
+    empty = {"full": [], "compact": [], "short": [], "minimum": []}
+    state = subscription_effective_state(subscription, now)
+    if state == "not_applicable" or not isinstance(subscription, dict):
+        return empty
+
+    stale = state == "stale"
+    plan = format_chatgpt_plan(subscription.get("plan"))
+    plan_plain = "GPT" + (f" {plan}" if plan else "") + (" stale" if stale else "")
+    plan_color = HEALTH_COLORS["stale"] if stale else CHATGPT_COLOR
+    plan_styled = tmux_style("GPT", fg=CHATGPT_COLOR, bold=True)
+    if plan:
+        plan_styled += " " + tmux_style(plan, fg=plan_color, bold=True)
+    if stale:
+        plan_styled += " " + tmux_style("stale", fg=plan_color, bold=True)
+    plan_segment = (plan_plain, plan_styled)
+
+    raw_limits = subscription.get("limits")
+    limits = [limit for limit in raw_limits if isinstance(limit, dict)] if isinstance(raw_limits, list) else []
+    if not limits:
+        unavailable_plain = "limits?" if state == "unavailable" else "limits stale"
+        unavailable_segment = (unavailable_plain, tmux_style(unavailable_plain, fg=UNAVAILABLE_COLOR, bold=True))
+        return {
+            "full": [plan_segment, unavailable_segment],
+            "compact": [plan_segment, unavailable_segment],
+            "short": [plan_segment],
+            "minimum": [plan_segment],
+        }
+
+    canonical = next((limit for limit in limits if str(limit.get("id") or "").lower() == "codex"), limits[0])
+    canonical_reached = bool(canonical.get("rate_limit_reached_type"))
+    full_segments = [plan_segment]
+    compact_segments = [plan_segment]
+    short_segments = [plan_segment]
+    minimum_segments = [plan_segment]
+
+    canonical_windows: dict[str, dict[str, Any]] = {}
+    for kind in ("primary", "secondary"):
+        window = canonical.get(kind)
+        if not isinstance(window, dict) or _quota_remaining(window) is None:
+            continue
+        canonical_windows[kind] = window
+        full = _quota_segment(
+            window,
+            kind,
+            now=now,
+            stale=stale,
+            reached=canonical_reached,
+            compact=False,
+            include_reset=True,
+        )
+        compact_value = _quota_segment(
+            window,
+            kind,
+            now=now,
+            stale=stale,
+            reached=canonical_reached,
+            compact=True,
+            include_reset=True,
+        )
+        short = _quota_segment(
+            window,
+            kind,
+            now=now,
+            stale=stale,
+            reached=canonical_reached,
+            compact=True,
+            include_reset=False,
+        )
+        if full is not None:
+            full_segments.append(full)
+        if compact_value is not None:
+            compact_segments.append(compact_value)
+        if short is not None:
+            short_segments.append(short)
+            if len(minimum_segments) == 1:
+                minimum_segments.append(short)
+
+    named_candidates: list[tuple[bool, int, str, str, dict[str, Any]]] = []
+    for limit in limits:
+        if limit is canonical:
+            continue
+        reached = bool(limit.get("rate_limit_reached_type"))
+        name = _short_limit_name(limit.get("name") or limit.get("id"))
+        for kind in ("primary", "secondary"):
+            window = limit.get(kind)
+            remaining = _quota_remaining(window)
+            if remaining is None or not isinstance(window, dict):
+                continue
+            canonical_remaining = _quota_remaining(canonical_windows.get(kind))
+            if reached or canonical_remaining is None or remaining < canonical_remaining:
+                named_candidates.append((reached, remaining, name, kind, window))
+
+    if named_candidates:
+        reached, _remaining, name, kind, window = min(
+            named_candidates,
+            key=lambda candidate: (not candidate[0], candidate[1]),
+        )
+        named_full = _quota_segment(
+            window,
+            kind,
+            now=now,
+            stale=stale,
+            reached=reached,
+            prefix=name,
+            compact=False,
+            include_reset=True,
+        )
+        named_compact = _quota_segment(
+            window,
+            kind,
+            now=now,
+            stale=stale,
+            reached=reached,
+            prefix=name,
+            compact=True,
+            include_reset=True,
+        )
+        named_short = _quota_segment(
+            window,
+            kind,
+            now=now,
+            stale=stale,
+            reached=reached,
+            prefix=name,
+            compact=True,
+            include_reset=False,
+        )
+        if named_full is not None:
+            full_segments.append(named_full)
+        if named_compact is not None:
+            compact_segments.append(named_compact)
+        if named_short is not None:
+            short_segments.append(named_short)
+
+    credits = canonical.get("credits")
+    if isinstance(credits, dict) and bool(credits.get("has_credits")):
+        if bool(credits.get("unlimited")):
+            credit_value = "∞"
+        else:
+            try:
+                balance = float(credits.get("balance"))
+            except (TypeError, ValueError, OverflowError):
+                balance = 0.0
+            credit_value = str(int(round(balance))) if balance > 0 else ""
+        if credit_value:
+            credit_plain = f"Credits {credit_value}"
+            credit_styled = tmux_style("Credits", fg=MUTED_COLOR) + " " + tmux_style(credit_value, fg=COST_OK_COLOR, bold=True)
+            full_segments.append((credit_plain, credit_styled))
+            compact_credit = (
+                f"Cr {credit_value}",
+                tmux_style("Cr", fg=MUTED_COLOR) + " " + tmux_style(credit_value, fg=COST_OK_COLOR, bold=True),
+            )
+            compact_segments.append(compact_credit)
+            short_segments.append(compact_credit)
+            if canonical_reached:
+                minimum_segments.append(compact_credit)
+
+    return {
+        "full": full_segments,
+        "compact": compact_segments,
+        "short": short_segments,
+        "minimum": minimum_segments,
+    }
+
+
+def _subscription_group(segments: list[tuple[str, str]]) -> tuple[str, str]:
+    if not segments:
+        return "", ""
+    plan, *details = segments
+    if not details:
+        return plan
+    detail_plain = " · ".join(segment[0] for segment in details)
+    detail_styled = tmux_style(" · ", fg=MUTED_COLOR).join(segment[1] for segment in details)
+    separator_plain = " · "
+    separator_styled = tmux_style(separator_plain, fg=MUTED_COLOR)
+    return (
+        f"{plan[0]}{separator_plain}{detail_plain}",
+        plan[1] + separator_styled + detail_styled,
+    )
+
+
 def render_tmux_status(
     snapshot: Snapshot,
     now: dt.datetime | None = None,
@@ -404,6 +758,8 @@ def render_tmux_status(
 ) -> str:
     if not isinstance(snapshot, dict):
         return "AI unavailable"
+    if max_width is not None and max_width <= 0:
+        return ""
 
     metrics = snapshot.get("metrics") or {}
     quality = snapshot.get("quality") or {}
@@ -411,134 +767,124 @@ def render_tmux_status(
     providers = [str(provider).strip().lower() for provider in (raw_providers or []) if str(provider).strip()]
     provider_set = set(providers)
     scope = str(snapshot.get("scope") or "combined").strip().lower()
+    subscription_tiers = (
+        _subscription_render_segments(snapshot.get("subscription"), now)
+        if scope in {"combined", "codex"}
+        else {"full": [], "compact": [], "short": [], "minimum": []}
+    )
+    subscription_groups = {
+        tier: _subscription_group(segments)
+        for tier, segments in subscription_tiers.items()
+    }
+    has_subscription = bool(subscription_groups["minimum"][0])
 
-    def join_plain(parts: list[str]) -> str:
-        return " · ".join(part for part in parts if part)
-
-    def join_styled(parts: list[str]) -> str:
-        separator = tmux_style(" · ", fg=MUTED_COLOR)
-        return separator.join(part for part in parts if part)
-
-    unavailable = raw_providers is not None and (not provider_set or (scope != "combined" and scope not in provider_set))
-    if unavailable:
+    local_unavailable = raw_providers is not None and (
+        not provider_set or (scope != "combined" and scope not in provider_set)
+    )
+    if local_unavailable and not has_subscription:
         if not use_tmux_style:
             return "AI unavailable"
         return tmux_style("AI", fg=AI_COLOR, bold=True) + " " + tmux_style("unavailable", fg=UNAVAILABLE_COLOR, bold=True)
 
     range_preset = str((snapshot.get("range") or {}).get("preset") or "mtd").strip().lower()
     range_short = range_short_for_preset(range_preset)
-    today_input_tokens = format_tokens_short(metrics.get("today_input_tokens") or 0)
-    today_output_tokens = format_tokens_short(metrics.get("today_output_tokens") or 0)
     today_total_tokens = format_tokens_short(metrics.get("today_tokens") or 0)
-    range_tokens = format_tokens_short(metrics.get("range_tokens") or 0)
-    range_input_tokens = format_tokens_short(metrics.get("range_input_tokens") or 0)
-    range_output_tokens = format_tokens_short(metrics.get("range_output_tokens") or 0)
-    range_total_tokens = range_tokens
-    today_breakdown = f"T I {today_input_tokens} O {today_output_tokens} Σ {today_total_tokens}"
-    range_breakdown = f"{range_short} I {range_input_tokens} O {range_output_tokens} Σ {range_total_tokens}"
+    range_total_tokens = format_tokens_short(metrics.get("range_tokens") or 0)
     cost = format_usd_short(metrics.get("range_cost_usd"))
     if not bool(quality.get("pricing_complete", True)) and cost != "cost?":
         cost = f"{cost}*"
-    range_cost = f"{range_short} {cost}"
     refreshed_at = format_refresh_time(snapshot.get("generated_at"), now)
-    next_refresh_at = format_next_refresh_time(snapshot.get("generated_at"), interval_minutes=refresh_interval_minutes, now=now)
+    next_refresh_at = format_next_refresh_time(
+        snapshot.get("generated_at"),
+        interval_minutes=refresh_interval_minutes,
+        now=now,
+    )
     status = effective_health(snapshot, now, refresh_interval_minutes=refresh_interval_minutes)
-
-    lead_plain = f"AI {status}" if not (scope and scope != "combined") else f"AI {scope} {status}"
-
-    if status == "error":
-        plain = join_plain([lead_plain, f"{refreshed_at} → {next_refresh_at}"])
-        variant = "error_cached"
-    else:
-        full = join_plain([lead_plain, today_breakdown, range_breakdown, range_cost, f"{refreshed_at} → {next_refresh_at}"])
-        compact = join_plain([lead_plain, today_breakdown, range_breakdown, f"{refreshed_at} → {next_refresh_at}"])
-        short = join_plain([lead_plain, range_breakdown, f"{refreshed_at} → {next_refresh_at}"])
-        minimum = join_plain([lead_plain, f"{range_short} {range_tokens}"])
-
-        if max_width is None or len(full) <= max_width:
-            plain = full
-            variant = "full"
-        elif len(compact) <= max_width:
-            plain = compact
-            variant = "compact"
-        elif len(short) <= max_width:
-            plain = short
-            variant = "short"
-        elif len(minimum) <= max_width:
-            plain = minimum
-            variant = "minimum"
-        else:
-            plain = minimum[:max_width]
-            variant = "minimum"
-
-    if not use_tmux_style:
-        return plain
-
     health_label = status if status in HEALTH_COLORS else "error"
     health_color = HEALTH_COLORS.get(health_label, HEALTH_COLORS["error"])
-    ai_segment = tmux_style("AI", fg=AI_COLOR, bold=True)
-    health_segment = tmux_style(health_label, fg=health_color, bold=True)
-    if scope and scope != "combined":
-        lead_segment = ai_segment + " " + tmux_style(scope, fg=SCOPE_COLOR, bold=True) + " " + health_segment
-    else:
-        lead_segment = ai_segment + " " + health_segment
 
-    today_segment = (
-        tmux_style("T", fg=MUTED_COLOR)
+    ai_segment = tmux_style("AI", fg=AI_COLOR, bold=True)
+    if status == "ok":
+        if has_subscription:
+            lead = ("", "")
+        elif scope and scope != "combined":
+            lead = (f"AI {scope}", ai_segment + " " + tmux_style(scope, fg=SCOPE_COLOR, bold=True))
+        else:
+            lead = ("AI", ai_segment)
+    else:
+        health_segment = tmux_style(health_label, fg=health_color, bold=True)
+        if scope and scope != "combined":
+            lead = (
+                f"AI {scope} {status}",
+                ai_segment + " " + tmux_style(scope, fg=SCOPE_COLOR, bold=True) + " " + health_segment,
+            )
+        else:
+            lead = (f"AI {status}", ai_segment + " " + health_segment)
+    ai_only = ("AI", ai_segment)
+
+    today_group = (
+        f"Today {today_total_tokens}",
+        tmux_style("Today", fg=MUTED_COLOR)
         + " "
-        + tmux_style("I", fg=MUTED_COLOR)
-        + " "
-        + tmux_style(today_input_tokens, fg=TODAY_VALUE_COLOR, bold=True)
-        + " "
-        + tmux_style("O", fg=MUTED_COLOR)
-        + " "
-        + tmux_style(today_output_tokens, fg=TODAY_VALUE_COLOR, bold=True)
-        + " "
-        + tmux_style("Σ", fg=MUTED_COLOR)
-        + " "
-        + tmux_style(
-            today_total_tokens,
-            fg=TOTAL_TOKEN_HIGHLIGHT_FG,
-            bg=TOTAL_TOKEN_HIGHLIGHT_BG,
-            bold=True,
-        )
+        + tmux_style(today_total_tokens, fg=TODAY_VALUE_COLOR, bold=True),
     )
-    range_segment = (
+    range_group = (
+        f"{range_short} {range_total_tokens} · {cost}",
         tmux_style(range_short, fg=MUTED_COLOR)
         + " "
-        + tmux_style("I", fg=MUTED_COLOR)
-        + " "
-        + tmux_style(range_input_tokens, fg=RANGE_VALUE_COLOR, bold=True)
-        + " "
-        + tmux_style("O", fg=MUTED_COLOR)
-        + " "
-        + tmux_style(range_output_tokens, fg=RANGE_VALUE_COLOR, bold=True)
-        + " "
-        + tmux_style("Σ", fg=MUTED_COLOR)
-        + " "
-        + tmux_style(
-            range_total_tokens,
-            fg=TOTAL_TOKEN_HIGHLIGHT_FG,
-            bg=TOTAL_TOKEN_HIGHLIGHT_BG,
-            bold=True,
-        )
+        + tmux_style(range_total_tokens, fg=RANGE_VALUE_COLOR, bold=True)
+        + tmux_style(" · ", fg=MUTED_COLOR)
+        + tmux_style(cost, fg=health_color if cost.endswith("*") else COST_OK_COLOR, bold=True),
     )
-    cost_segment = tmux_style(range_short, fg=MUTED_COLOR) + " " + tmux_style(cost, fg=health_color if cost.endswith("*") else COST_OK_COLOR, bold=True)
     time_segment = (
+        f"{refreshed_at} → {next_refresh_at}",
         tmux_style(refreshed_at, fg=TODAY_VALUE_COLOR)
         + tmux_style(" → ", fg=MUTED_COLOR)
-        + tmux_style(next_refresh_at, fg=RANGE_VALUE_COLOR)
+        + tmux_style(next_refresh_at, fg=RANGE_VALUE_COLOR),
     )
 
-    if variant == "error_cached":
-        return join_styled([lead_segment, time_segment])
-    if variant == "full":
-        return join_styled([lead_segment, today_segment, range_segment, cost_segment, time_segment])
-    if variant == "compact":
-        return join_styled([lead_segment, today_segment, range_segment, time_segment])
-    if variant == "short":
-        return join_styled([lead_segment, range_segment, time_segment])
-    return join_styled([lead_segment, range_segment])
+    local_full = [] if local_unavailable else [today_group, range_group, time_segment]
+    local_compact = [] if local_unavailable else [today_group, range_group]
+    local_short = [] if local_unavailable else [range_group]
+    local_minimum = local_short
+
+    if status == "error":
+        candidates = [
+            [lead, subscription_groups["compact"], time_segment],
+            [lead, subscription_groups["short"]],
+            [lead],
+            [ai_only],
+        ]
+    else:
+        candidates = [
+            [lead, subscription_groups["full"], *local_full],
+            [lead, subscription_groups["compact"], *local_compact],
+            [lead, subscription_groups["compact"], *local_short],
+            [lead, subscription_groups["compact"]],
+            [lead, subscription_groups["short"], *local_compact],
+            [lead, subscription_groups["short"], *local_short],
+            [lead, subscription_groups["minimum"], *local_minimum],
+            [lead, subscription_groups["minimum"]],
+            [lead],
+            [ai_only],
+        ]
+
+    separator_plain = " · "
+    separator_styled = tmux_style(separator_plain, fg=MUTED_COLOR)
+    selected_plain = "AI"
+    selected_styled = ai_only[1]
+    for candidate in candidates:
+        pairs = [pair for pair in candidate if pair[0]]
+        plain = separator_plain.join(pair[0] for pair in pairs)
+        if max_width is None or len(plain) <= max_width:
+            selected_plain = plain
+            selected_styled = separator_styled.join(pair[1] for pair in pairs)
+            break
+
+    if max_width is not None and len(selected_plain) > max_width:
+        selected_plain = selected_plain[:max_width]
+        selected_styled = tmux_style(selected_plain, fg=AI_COLOR, bold=True)
+    return selected_styled if use_tmux_style else selected_plain
 
 
 def read_snapshot(path: Path) -> Snapshot | None:
