@@ -858,6 +858,7 @@ def render_tmux_status(
     else:
         candidates = [
             [lead, subscription_groups["full"], *local_full],
+            [lead, subscription_groups["compact"], *local_full],
             [lead, subscription_groups["compact"], *local_compact],
             [lead, subscription_groups["compact"], *local_short],
             [lead, subscription_groups["compact"]],

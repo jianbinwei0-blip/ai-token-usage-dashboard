@@ -16,6 +16,9 @@ class CodexAppServerError(RuntimeError):
 
 
 _EOF = object()
+_SUBSCRIPTION_SNAPSHOT_VERSION = 2
+_STANDARD_CODEX_WINDOW_MINUTES = (300, 10_080)
+_STANDARD_WINDOW_PLANS = {"free", "go", "plus", "pro", "prolite", "team"}
 
 
 class _CodexAppServerClient:
@@ -262,7 +265,7 @@ def normalize_chatgpt_subscription_usage(
     if not isinstance(account, dict) or str(account.get("type") or "").strip().lower() != "chatgpt":
         account_type = str(account.get("type") or "").strip() if isinstance(account, dict) else ""
         return {
-            "version": 1,
+            "version": _SUBSCRIPTION_SNAPSHOT_VERSION,
             "state": "not_applicable",
             "fetched_at": _utc_datetime(now).isoformat(),
             "account_type": account_type or None,
@@ -306,7 +309,7 @@ def normalize_chatgpt_subscription_usage(
     reset_credit_count = _safe_int(reset_credits.get("availableCount")) if isinstance(reset_credits, dict) else None
 
     return {
-        "version": 1,
+        "version": _SUBSCRIPTION_SNAPSHOT_VERSION,
         "state": "ok" if limits else "unavailable",
         "fetched_at": _utc_datetime(now).isoformat(),
         "account_type": "chatgpt",
@@ -314,6 +317,115 @@ def normalize_chatgpt_subscription_usage(
         "limits": limits,
         "reset_credits_available": max(0, reset_credit_count) if reset_credit_count is not None else None,
     }
+
+
+def _canonical_limit(subscription: Any) -> dict[str, Any] | None:
+    if not isinstance(subscription, dict):
+        return None
+    limits = subscription.get("limits")
+    if not isinstance(limits, list):
+        return None
+    return next(
+        (
+            limit
+            for limit in limits
+            if isinstance(limit, dict) and str(limit.get("id") or "").strip().lower() == "codex"
+        ),
+        None,
+    )
+
+
+def reconcile_chatgpt_subscription_usage(
+    current: dict[str, Any],
+    previous: dict[str, Any] | None = None,
+    *,
+    now: dt.datetime | None = None,
+) -> dict[str, Any]:
+    """Keep standard Codex quota categories visible when an inactive window is omitted.
+
+    The ChatGPT usage endpoint drops a fully reset window until usage starts a new one. A missing
+    standard window therefore means 100% remains, not that the quota category disappeared. If a
+    previously observed window is still active, retain that observation instead.
+    """
+
+    reconciled = dict(current)
+    reconciled["version"] = max(
+        _SUBSCRIPTION_SNAPSHOT_VERSION,
+        _safe_int(reconciled.get("version")) or 0,
+    )
+    if str(reconciled.get("account_type") or "").strip().lower() != "chatgpt":
+        return reconciled
+
+    raw_limits = reconciled.get("limits")
+    if not isinstance(raw_limits, list):
+        return reconciled
+    limits = [dict(limit) if isinstance(limit, dict) else limit for limit in raw_limits]
+    canonical_index = next(
+        (
+            index
+            for index, limit in enumerate(limits)
+            if isinstance(limit, dict) and str(limit.get("id") or "").strip().lower() == "codex"
+        ),
+        None,
+    )
+    if canonical_index is None:
+        return reconciled
+
+    canonical = dict(limits[canonical_index])
+    plan = str(reconciled.get("plan") or canonical.get("plan") or "").strip().lower()
+    if plan not in _STANDARD_WINDOW_PLANS:
+        return reconciled
+
+    windows_by_duration: dict[int, dict[str, Any]] = {}
+    observed_durations: set[int] = set()
+    for kind in ("primary", "secondary"):
+        window = canonical.get(kind)
+        if not isinstance(window, dict):
+            continue
+        duration = _safe_int(window.get("window_duration_minutes"))
+        if duration is None:
+            continue
+        observed_durations.add(duration)
+        windows_by_duration[duration] = dict(window)
+
+    standard_durations = set(_STANDARD_CODEX_WINDOW_MINUTES)
+    if not observed_durations or not observed_durations.issubset(standard_durations):
+        return reconciled
+
+    previous_limit = _canonical_limit(previous)
+    previous_windows: dict[int, dict[str, Any]] = {}
+    if previous_limit is not None:
+        for kind in ("primary", "secondary"):
+            window = previous_limit.get(kind)
+            if not isinstance(window, dict):
+                continue
+            duration = _safe_int(window.get("window_duration_minutes"))
+            if duration in standard_durations:
+                previous_windows[duration] = dict(window)
+
+    reference_epoch = int(_utc_datetime(now).timestamp())
+    for duration in _STANDARD_CODEX_WINDOW_MINUTES:
+        if duration in windows_by_duration:
+            continue
+        previous_window = previous_windows.get(duration)
+        previous_reset = _safe_int(previous_window.get("resets_at")) if previous_window else None
+        if previous_window is not None and previous_reset is not None and previous_reset > reference_epoch:
+            inferred_window = previous_window
+        else:
+            inferred_window = {
+                "used_percent": 0,
+                "remaining_percent": 100,
+                "window_duration_minutes": duration,
+                "resets_at": None,
+            }
+        inferred_window["inferred"] = True
+        windows_by_duration[duration] = inferred_window
+
+    canonical["primary"] = windows_by_duration[300]
+    canonical["secondary"] = windows_by_duration[10_080]
+    limits[canonical_index] = canonical
+    reconciled["limits"] = limits
+    return reconciled
 
 
 def fetch_chatgpt_subscription_usage(

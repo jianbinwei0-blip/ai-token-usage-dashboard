@@ -96,7 +96,8 @@ GPT Pro · 5h 72% ↻14:35 · 7d 61% ↻Fri 09:00 · Today 13.3M · MTD 934.7M �
 Where:
 - `GPT Pro` is the detected ChatGPT plan; it is omitted for API-key, Bedrock, signed-out, or disabled account usage
 - `5h` and `7d` are the primary and weekly Codex quota windows, expressed as percent remaining
-- `↻` shows each quota's reset in local time; both reset times remain visible in the normal 96-character presentation
+- a fully reset, inactive five-hour window remains visible as `5h 100%` when the Codex endpoint temporarily omits it; an active value is never replaced with this fallback
+- `↻` shows each active quota's reset in local time; both reset times remain visible in the normal 96-character presentation
 - `Today` and `MTD` are total tokens; input/output details are intentionally omitted
 - the amount after the MTD token total is the locally derived month-to-date cost estimate, not an additional ChatGPT subscription charge
 - middle dots consistently separate plan, quota, token, and cost values

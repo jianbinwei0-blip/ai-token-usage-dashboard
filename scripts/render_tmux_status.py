@@ -19,7 +19,10 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT / "scripts") not in sys.path:
     sys.path.insert(0, str(REPO_ROOT / "scripts"))
 
-from dashboard_core.chatgpt_subscription import fetch_chatgpt_subscription_usage
+from dashboard_core.chatgpt_subscription import (
+    fetch_chatgpt_subscription_usage,
+    reconcile_chatgpt_subscription_usage,
+)
 from dashboard_core.config import DashboardConfig
 from dashboard_core.pipeline import recalc_dashboard
 from dashboard_core.runtime_html import seed_runtime_html
@@ -109,8 +112,16 @@ def snapshot_is_fresh(
     subscription_enabled = chatgpt_usage == "auto"
     if bool(snapshot.get("subscription_enabled")) != subscription_enabled:
         return False
-    if subscription_enabled and not isinstance(snapshot.get("subscription"), dict):
-        return False
+    if subscription_enabled:
+        subscription = snapshot.get("subscription")
+        if not isinstance(subscription, dict):
+            return False
+        try:
+            subscription_version = int(subscription.get("version") or 0)
+        except (TypeError, ValueError, OverflowError):
+            return False
+        if subscription_version < 2:
+            return False
     if str(snapshot.get("scope") or "combined") != scope:
         return False
     cached_range = (snapshot.get("range") or {}).get("preset")
@@ -143,16 +154,22 @@ def refresh_subscription_snapshot(
     now: dt.datetime | None = None,
 ) -> dict:
     attempted_at = now or effective_now()
+    previous = previous_snapshot.get("subscription") if isinstance(previous_snapshot, dict) else None
+    previous_subscription = previous if isinstance(previous, dict) else None
     try:
-        return fetch_chatgpt_subscription_usage(
+        current = fetch_chatgpt_subscription_usage(
             codex_binary=codex_binary,
             timeout_seconds=timeout_seconds,
             now=attempted_at,
         )
+        return reconcile_chatgpt_subscription_usage(
+            current,
+            previous_subscription,
+            now=attempted_at,
+        )
     except Exception:
-        previous = previous_snapshot.get("subscription") if isinstance(previous_snapshot, dict) else None
-        if isinstance(previous, dict):
-            fallback = dict(previous)
+        if previous_subscription is not None:
+            fallback = dict(previous_subscription)
             if (
                 str(fallback.get("account_type") or "").strip().lower() == "chatgpt"
                 and isinstance(fallback.get("limits"), list)
@@ -160,9 +177,9 @@ def refresh_subscription_snapshot(
             ):
                 fallback["state"] = "stale"
             fallback["last_attempted_at"] = attempted_at.astimezone(dt.timezone.utc).isoformat()
-            return fallback
+            return reconcile_chatgpt_subscription_usage(fallback, previous_subscription, now=attempted_at)
         return {
-            "version": 1,
+            "version": 2,
             "state": "unavailable",
             "fetched_at": attempted_at.astimezone(dt.timezone.utc).isoformat(),
             "account_type": None,
