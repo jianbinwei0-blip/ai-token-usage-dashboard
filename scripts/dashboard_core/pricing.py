@@ -217,30 +217,58 @@ class PricingCatalog:
             "warning_count": len(warnings),
         }
 
-    def _native_cost_breakdown(self, native_cost: dict[str, object] | None) -> CostBreakdown | None:
-        if not isinstance(native_cost, dict) or not native_cost:
+    def _native_cost_breakdown(self, native_cost: object) -> CostBreakdown | None:
+        values = native_cost_values(native_cost)
+        if values is None:
             return None
-
-        input_cost_usd = _safe_non_negative_float(native_cost.get("input"))
-        output_cost_usd = _safe_non_negative_float(native_cost.get("output"))
-        cache_read_cost = _safe_non_negative_float(native_cost.get("cacheRead"))
-        cache_write_cost = _safe_non_negative_float(native_cost.get("cacheWrite"))
-        total_cost_value = native_cost.get("total")
-        cached_cost_usd = round_cost(cache_read_cost + cache_write_cost)
-
-        if total_cost_value is None:
-            total_cost_usd = round_cost(input_cost_usd + output_cost_usd + cached_cost_usd)
-        else:
-            total_cost_usd = round_cost(_safe_non_negative_float(total_cost_value))
-
         return CostBreakdown(
-            input_cost_usd=round_cost(input_cost_usd),
-            output_cost_usd=round_cost(output_cost_usd),
-            cached_cost_usd=cached_cost_usd,
-            total_cost_usd=total_cost_usd,
+            input_cost_usd=values[0],
+            output_cost_usd=values[1],
+            cached_cost_usd=values[2],
+            total_cost_usd=values[3],
             cost_complete=True,
             source="native",
         )
+
+
+def normalize_native_cost(native_cost: object) -> tuple[float, float, float, float, float | None] | None:
+    if isinstance(native_cost, dict) and native_cost:
+        total_cost_value = native_cost.get("total")
+        return (
+            _safe_non_negative_float(native_cost.get("input")),
+            _safe_non_negative_float(native_cost.get("output")),
+            _safe_non_negative_float(native_cost.get("cacheRead")),
+            _safe_non_negative_float(native_cost.get("cacheWrite")),
+            _safe_non_negative_float(total_cost_value) if total_cost_value is not None else None,
+        )
+    if isinstance(native_cost, (list, tuple)) and len(native_cost) == 5:
+        return (
+            _safe_non_negative_float(native_cost[0]),
+            _safe_non_negative_float(native_cost[1]),
+            _safe_non_negative_float(native_cost[2]),
+            _safe_non_negative_float(native_cost[3]),
+            _safe_non_negative_float(native_cost[4]) if native_cost[4] is not None else None,
+        )
+    return None
+
+
+def native_cost_values(native_cost: object) -> tuple[float, float, float, float] | None:
+    normalized = normalize_native_cost(native_cost)
+    if normalized is None:
+        return None
+    input_cost_usd, output_cost_usd, cache_read_cost, cache_write_cost, total_cost_value = normalized
+    cached_cost_usd = round_cost(cache_read_cost + cache_write_cost)
+    total_cost_usd = (
+        round_cost(input_cost_usd + output_cost_usd + cached_cost_usd)
+        if total_cost_value is None
+        else round_cost(total_cost_value)
+    )
+    return (
+        round_cost(input_cost_usd),
+        round_cost(output_cost_usd),
+        cached_cost_usd,
+        total_cost_usd,
+    )
 
 
 def _copy_rate_card(rate_card: dict) -> dict:

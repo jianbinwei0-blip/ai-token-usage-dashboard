@@ -9,7 +9,7 @@ from collections import Counter, defaultdict
 from pathlib import Path
 
 from .models import ActivityTotals, BreakdownTotals, DailyTotals, round_cost
-from .pricing import PricingCatalog
+from .pricing import PricingCatalog, native_cost_values, normalize_native_cost
 
 
 DEFAULT_MODEL = "unknown"
@@ -43,7 +43,7 @@ CLAUDE_BUILTIN_COMMANDS = frozenset(
 CodexContribution = tuple[object, ...]
 ClaudeRequestRecord = tuple[str, str, dt.datetime, int, int, int, int, int, str]
 ClaudeAttributionEvent = tuple[str, str, str, dt.datetime]
-PiUsageRow = tuple[str, str, int, int, int, int, int, int, object]
+PiUsageRow = tuple[str, str, int, int, int, int, int, int, object, object]
 PiActivityRow = tuple[str, dt.datetime]
 
 
@@ -390,13 +390,41 @@ def _read_file_signature_window(file_path: Path, start: int, end: int) -> str:
         return ""
 
 
+def _pi_native_cost_state(native_cost: object) -> tuple[object, object]:
+    normalized = normalize_native_cost(native_cost)
+    values = native_cost_values(normalized)
+    if normalized is None or values is None:
+        return None, None
+    return normalized, tuple(cost_to_nanodollars(value) for value in values)
+
+
+def _pi_native_cost_mapping(native_cost: object) -> dict[str, float] | None:
+    normalized = normalize_native_cost(native_cost)
+    if normalized is None:
+        return None
+    mapped = {
+        "input": normalized[0],
+        "output": normalized[1],
+        "cacheRead": normalized[2],
+        "cacheWrite": normalized[3],
+    }
+    if normalized[4] is not None:
+        mapped["total"] = normalized[4]
+    return mapped
+
+
 def _pi_usage_row_from_object(row: object) -> PiUsageRow | None:
-    if isinstance(row, tuple) and len(row) == 9:
+    if isinstance(row, tuple) and len(row) == 10:
         return row
-    if isinstance(row, list) and len(row) == 9:
+    if isinstance(row, list) and len(row) == 10:
         date_value = row[0]
         if not isinstance(date_value, str):
             return None
+        if isinstance(row[8], list) and len(row[8]) == 5 and isinstance(row[9], list) and len(row[9]) == 4:
+            native_cost = tuple(row[8])
+            priced_cost = tuple(row[9])
+        else:
+            native_cost, priced_cost = _pi_native_cost_state(row[8])
         return (
             date_value,
             row[1] if isinstance(row[1], str) and row[1] else DEFAULT_MODEL,
@@ -406,13 +434,32 @@ def _pi_usage_row_from_object(row: object) -> PiUsageRow | None:
             row[5],
             row[6],
             row[7],
-            row[8] if isinstance(row[8], dict) else None,
+            native_cost,
+            priced_cost,
+        )
+    if isinstance(row, list) and len(row) == 9:
+        date_value = row[0]
+        if not isinstance(date_value, str):
+            return None
+        native_cost, priced_cost = _pi_native_cost_state(row[8])
+        return (
+            date_value,
+            row[1] if isinstance(row[1], str) and row[1] else DEFAULT_MODEL,
+            row[2],
+            row[3],
+            row[4],
+            row[5],
+            row[6],
+            row[7],
+            native_cost,
+            priced_cost,
         )
     if not isinstance(row, dict):
         return None
     date_value = row.get("date")
     if not isinstance(date_value, str):
         return None
+    native_cost, priced_cost = _pi_native_cost_state(row.get("native_cost"))
     return (
         date_value,
         normalized_bucket_value(row.get("model"), DEFAULT_MODEL),
@@ -422,7 +469,8 @@ def _pi_usage_row_from_object(row: object) -> PiUsageRow | None:
         safe_non_negative_int(row.get("cache_write_tokens")),
         safe_non_negative_int(row.get("cached_tokens")),
         safe_non_negative_int(row.get("total_tokens")),
-        row.get("native_cost") if isinstance(row.get("native_cost"), dict) else None,
+        native_cost,
+        priced_cost,
     )
 
 
@@ -672,7 +720,10 @@ def load_persistent_parse_caches(cache_path: Path | None) -> None:
             )
             legacy_rows = (
                 isinstance(usage_rows_payload, list)
-                and any(isinstance(row, dict) for row in usage_rows_payload)
+                and any(
+                    isinstance(row, dict) or (isinstance(row, list) and len(row) != 10)
+                    for row in usage_rows_payload
+                )
             ) or (
                 isinstance(activity_rows_payload, list)
                 and any(isinstance(row, dict) for row in activity_rows_payload)
@@ -1885,6 +1936,7 @@ def _pi_usage_rows_index(contribution: dict[str, object]) -> dict[tuple[str, str
             cached_tokens,
             total_tokens,
             native_cost,
+            _priced_cost,
         ) = compact_row
         normalized_row: dict[str, object] = {
             "date": date_value,
@@ -1895,7 +1947,7 @@ def _pi_usage_rows_index(contribution: dict[str, object]) -> dict[tuple[str, str
             "cache_write_tokens": cache_write_tokens,
             "cached_tokens": cached_tokens,
             "total_tokens": total_tokens,
-            "native_cost": dict(native_cost) if native_cost is not None else None,
+            "native_cost": _pi_native_cost_mapping(native_cost),
         }
         normalized_rows.append(normalized_row)
         indexed[(date_value, model)] = normalized_row
@@ -2146,7 +2198,10 @@ def collect_pi_usage_data(
                 continue
             _usage_date_value, timestamp = compact_activity
             usage_date = timestamp.date()
-            session_activity[usage_date] = ActivityTotals(date=usage_date, hour=timestamp.hour)
+            session_totals = ActivityTotals(date=usage_date, hour=timestamp.hour)
+            session_totals.input_cost_usd = session_totals.output_cost_usd = 0
+            session_totals.cached_cost_usd = session_totals.total_cost_usd = 0
+            session_activity[usage_date] = session_totals
 
         for usage_row in usage_rows:
             compact_usage = _pi_usage_row_from_object(usage_row)
@@ -2162,72 +2217,89 @@ def collect_pi_usage_data(
                 cached_tokens,
                 total_tokens,
                 native_cost,
+                priced_cost,
             ) = compact_usage
             try:
                 usage_date = dt.date.fromisoformat(usage_date_value)
             except ValueError:
                 continue
-            priced = catalog.price_usage(
-                "pi",
-                model,
-                uncached_input_tokens=input_tokens,
-                output_tokens=output_tokens,
-                cache_read_tokens=cache_read_tokens,
-                cache_write_tokens=cache_write_tokens,
-                native_cost=native_cost,
-            )
+            if isinstance(priced_cost, tuple) and len(priced_cost) == 4:
+                input_cost, output_cost, cached_cost, total_cost = priced_cost
+                cost_complete = True
+            else:
+                priced = catalog.price_usage(
+                    "pi",
+                    model,
+                    uncached_input_tokens=input_tokens,
+                    output_tokens=output_tokens,
+                    cache_read_tokens=cache_read_tokens,
+                    cache_write_tokens=cache_write_tokens,
+                    native_cost=native_cost,
+                )
+                input_cost = cost_to_nanodollars(priced.input_cost_usd)
+                output_cost = cost_to_nanodollars(priced.output_cost_usd)
+                cached_cost = cost_to_nanodollars(priced.cached_cost_usd)
+                total_cost = cost_to_nanodollars(priced.total_cost_usd)
+                cost_complete = priced.cost_complete
 
             daily = totals.get(usage_date)
             if daily is None:
                 daily = DailyTotals(date=usage_date)
+                daily.input_cost_usd = daily.output_cost_usd = daily.cached_cost_usd = daily.total_cost_usd = 0
                 totals[usage_date] = daily
             daily.input_tokens += input_tokens
             daily.output_tokens += output_tokens
             daily.cached_tokens += cached_tokens
             daily.total_tokens += total_tokens
-            daily.input_cost_usd += priced.input_cost_usd
-            daily.output_cost_usd += priced.output_cost_usd
-            daily.cached_cost_usd += priced.cached_cost_usd
-            daily.total_cost_usd += priced.total_cost_usd
-            daily.cost_complete = daily.cost_complete and priced.cost_complete
+            daily.input_cost_usd += input_cost
+            daily.output_cost_usd += output_cost
+            daily.cached_cost_usd += cached_cost
+            daily.total_cost_usd += total_cost
+            daily.cost_complete = daily.cost_complete and cost_complete
 
             agent_cli = "pi"
             breakdown_key = (agent_cli, model)
             breakdown = daily.breakdowns.get(breakdown_key)
             if breakdown is None:
                 breakdown = BreakdownTotals(agent_cli=agent_cli, model=model)
+                breakdown.input_cost_usd = breakdown.output_cost_usd = 0
+                breakdown.cached_cost_usd = breakdown.total_cost_usd = 0
                 daily.breakdowns[breakdown_key] = breakdown
             breakdown.input_tokens += input_tokens
             breakdown.output_tokens += output_tokens
             breakdown.cached_tokens += cached_tokens
             breakdown.total_tokens += total_tokens
-            breakdown.input_cost_usd += priced.input_cost_usd
-            breakdown.output_cost_usd += priced.output_cost_usd
-            breakdown.cached_cost_usd += priced.cached_cost_usd
-            breakdown.total_cost_usd += priced.total_cost_usd
-            breakdown.cost_complete = breakdown.cost_complete and priced.cost_complete
+            breakdown.input_cost_usd += input_cost
+            breakdown.output_cost_usd += output_cost
+            breakdown.cached_cost_usd += cached_cost
+            breakdown.total_cost_usd += total_cost
+            breakdown.cost_complete = breakdown.cost_complete and cost_complete
             daily_sessions.setdefault(usage_date, set()).add(session_id)
             bucket_sessions.setdefault((usage_date, agent_cli, model), set()).add(session_id)
 
             activity = session_activity.get(usage_date)
             if activity is None:
                 activity = ActivityTotals(date=usage_date, hour=0)
+                activity.input_cost_usd = activity.output_cost_usd = 0
+                activity.cached_cost_usd = activity.total_cost_usd = 0
                 session_activity[usage_date] = activity
             activity.input_tokens += input_tokens
             activity.output_tokens += output_tokens
             activity.cached_tokens += cached_tokens
             activity.total_tokens += total_tokens
-            activity.input_cost_usd += priced.input_cost_usd
-            activity.output_cost_usd += priced.output_cost_usd
-            activity.cached_cost_usd += priced.cached_cost_usd
-            activity.total_cost_usd += priced.total_cost_usd
-            activity.cost_complete = activity.cost_complete and priced.cost_complete
+            activity.input_cost_usd += input_cost
+            activity.output_cost_usd += output_cost
+            activity.cached_cost_usd += cached_cost
+            activity.total_cost_usd += total_cost
+            activity.cost_complete = activity.cost_complete and cost_complete
 
         for activity in session_activity.values():
             activity_key = (activity.date, activity.hour)
             total_activity = activity_totals.get(activity_key)
             if total_activity is None:
                 total_activity = ActivityTotals(date=activity.date, hour=activity.hour)
+                total_activity.input_cost_usd = total_activity.output_cost_usd = 0
+                total_activity.cached_cost_usd = total_activity.total_cost_usd = 0
                 activity_totals[activity_key] = total_activity
             total_activity.sessions += 1
             total_activity.input_tokens += activity.input_tokens
@@ -2252,11 +2324,11 @@ def collect_pi_usage_data(
             daily.breakdowns[(agent_cli, model)].sessions = len(sessions)
 
     for daily in totals.values():
-        _round_accumulated_costs(daily)
+        _materialize_nanodollar_costs(daily)
         for breakdown in daily.breakdowns.values():
-            _round_accumulated_costs(breakdown)
+            _materialize_nanodollar_costs(breakdown)
     for activity in activity_totals.values():
-        _round_accumulated_costs(activity)
+        _materialize_nanodollar_costs(activity)
 
     return totals, activity_totals
 
