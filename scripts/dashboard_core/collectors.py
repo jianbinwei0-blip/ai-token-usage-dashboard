@@ -1899,7 +1899,7 @@ def collect_pi_usage_data(
         if not isinstance(activity_rows, list):
             activity_rows = []
 
-        session_activity: dict[dt.date, dict[str, object]] = {}
+        session_activity: dict[dt.date, ActivityTotals] = {}
         for activity_row in activity_rows:
             if not isinstance(activity_row, dict):
                 continue
@@ -1907,18 +1907,7 @@ def collect_pi_usage_data(
             if not isinstance(timestamp, dt.datetime):
                 continue
             usage_date = timestamp.date()
-            session_activity[usage_date] = {
-                "timestamp": timestamp,
-                "input_tokens": 0,
-                "output_tokens": 0,
-                "cached_tokens": 0,
-                "total_tokens": 0,
-                "input_cost_usd": 0.0,
-                "output_cost_usd": 0.0,
-                "cached_cost_usd": 0.0,
-                "total_cost_usd": 0.0,
-                "cost_complete": True,
-            }
+            session_activity[usage_date] = ActivityTotals(date=usage_date, hour=timestamp.hour)
 
         for usage_row in usage_rows:
             if not isinstance(usage_row, dict):
@@ -1949,68 +1938,68 @@ def collect_pi_usage_data(
                 native_cost=native_cost,
             )
 
-            daily = totals.setdefault(usage_date, DailyTotals(date=usage_date))
+            daily = totals.get(usage_date)
+            if daily is None:
+                daily = DailyTotals(date=usage_date)
+                totals[usage_date] = daily
+            daily.input_tokens += input_tokens
+            daily.output_tokens += output_tokens
+            daily.cached_tokens += cached_tokens
+            daily.total_tokens += total_tokens
+            daily.input_cost_usd += priced.input_cost_usd
+            daily.output_cost_usd += priced.output_cost_usd
+            daily.cached_cost_usd += priced.cached_cost_usd
+            daily.total_cost_usd += priced.total_cost_usd
+            daily.cost_complete = daily.cost_complete and priced.cost_complete
+
             agent_cli = "pi"
-            apply_usage_to_daily(
-                daily,
-                agent_cli=agent_cli,
-                model=model,
-                input_tokens=input_tokens,
-                output_tokens=output_tokens,
-                cached_tokens=cached_tokens,
-                total_tokens=total_tokens,
-                input_cost_usd=priced.input_cost_usd,
-                output_cost_usd=priced.output_cost_usd,
-                cached_cost_usd=priced.cached_cost_usd,
-                total_cost_usd=priced.total_cost_usd,
-                cost_complete=priced.cost_complete,
-            )
+            breakdown_key = (agent_cli, model)
+            breakdown = daily.breakdowns.get(breakdown_key)
+            if breakdown is None:
+                breakdown = BreakdownTotals(agent_cli=agent_cli, model=model)
+                daily.breakdowns[breakdown_key] = breakdown
+            breakdown.input_tokens += input_tokens
+            breakdown.output_tokens += output_tokens
+            breakdown.cached_tokens += cached_tokens
+            breakdown.total_tokens += total_tokens
+            breakdown.input_cost_usd += priced.input_cost_usd
+            breakdown.output_cost_usd += priced.output_cost_usd
+            breakdown.cached_cost_usd += priced.cached_cost_usd
+            breakdown.total_cost_usd += priced.total_cost_usd
+            breakdown.cost_complete = breakdown.cost_complete and priced.cost_complete
             daily_sessions.setdefault(usage_date, set()).add(session_id)
             bucket_sessions.setdefault((usage_date, agent_cli, model), set()).add(session_id)
 
             activity = session_activity.get(usage_date)
             if activity is None:
-                activity = {
-                    "timestamp": dt.datetime.combine(usage_date, dt.time(hour=0), tzinfo=LOCAL_TIMEZONE),
-                    "input_tokens": 0,
-                    "output_tokens": 0,
-                    "cached_tokens": 0,
-                    "total_tokens": 0,
-                    "input_cost_usd": 0.0,
-                    "output_cost_usd": 0.0,
-                    "cached_cost_usd": 0.0,
-                    "total_cost_usd": 0.0,
-                    "cost_complete": True,
-                }
+                activity = ActivityTotals(date=usage_date, hour=0)
                 session_activity[usage_date] = activity
-            activity["input_tokens"] = safe_non_negative_int(activity.get("input_tokens")) + input_tokens
-            activity["output_tokens"] = safe_non_negative_int(activity.get("output_tokens")) + output_tokens
-            activity["cached_tokens"] = safe_non_negative_int(activity.get("cached_tokens")) + cached_tokens
-            activity["total_tokens"] = safe_non_negative_int(activity.get("total_tokens")) + total_tokens
-            activity["input_cost_usd"] = float(activity.get("input_cost_usd") or 0.0) + priced.input_cost_usd
-            activity["output_cost_usd"] = float(activity.get("output_cost_usd") or 0.0) + priced.output_cost_usd
-            activity["cached_cost_usd"] = float(activity.get("cached_cost_usd") or 0.0) + priced.cached_cost_usd
-            activity["total_cost_usd"] = float(activity.get("total_cost_usd") or 0.0) + priced.total_cost_usd
-            activity["cost_complete"] = bool(activity.get("cost_complete", True)) and priced.cost_complete
+            activity.input_tokens += input_tokens
+            activity.output_tokens += output_tokens
+            activity.cached_tokens += cached_tokens
+            activity.total_tokens += total_tokens
+            activity.input_cost_usd += priced.input_cost_usd
+            activity.output_cost_usd += priced.output_cost_usd
+            activity.cached_cost_usd += priced.cached_cost_usd
+            activity.total_cost_usd += priced.total_cost_usd
+            activity.cost_complete = activity.cost_complete and priced.cost_complete
 
         for activity in session_activity.values():
-            timestamp = activity.get("timestamp")
-            if not isinstance(timestamp, dt.datetime):
-                continue
-            add_usage_to_activity(
-                activity_totals,
-                timestamp,
-                sessions=1,
-                input_tokens=safe_non_negative_int(activity.get("input_tokens")),
-                output_tokens=safe_non_negative_int(activity.get("output_tokens")),
-                cached_tokens=safe_non_negative_int(activity.get("cached_tokens")),
-                total_tokens=safe_non_negative_int(activity.get("total_tokens")),
-                input_cost_usd=float(activity.get("input_cost_usd") or 0.0),
-                output_cost_usd=float(activity.get("output_cost_usd") or 0.0),
-                cached_cost_usd=float(activity.get("cached_cost_usd") or 0.0),
-                total_cost_usd=float(activity.get("total_cost_usd") or 0.0),
-                cost_complete=bool(activity.get("cost_complete", True)),
-            )
+            activity_key = (activity.date, activity.hour)
+            total_activity = activity_totals.get(activity_key)
+            if total_activity is None:
+                total_activity = ActivityTotals(date=activity.date, hour=activity.hour)
+                activity_totals[activity_key] = total_activity
+            total_activity.sessions += 1
+            total_activity.input_tokens += activity.input_tokens
+            total_activity.output_tokens += activity.output_tokens
+            total_activity.cached_tokens += activity.cached_tokens
+            total_activity.total_tokens += activity.total_tokens
+            total_activity.input_cost_usd += activity.input_cost_usd
+            total_activity.output_cost_usd += activity.output_cost_usd
+            total_activity.cached_cost_usd += activity.cached_cost_usd
+            total_activity.total_cost_usd += activity.total_cost_usd
+            total_activity.cost_complete = total_activity.cost_complete and activity.cost_complete
 
     _prune_cache_for_root(_PI_SESSION_RECORDS_CACHE, sessions_root, live_cache_keys)
 
@@ -2021,7 +2010,14 @@ def collect_pi_usage_data(
     for (usage_date, agent_cli, model), sessions in bucket_sessions.items():
         daily = totals.get(usage_date)
         if daily is not None:
-            daily.add_breakdown(agent_cli=agent_cli, model=model, sessions=len(sessions))
+            daily.breakdowns[(agent_cli, model)].sessions = len(sessions)
+
+    for daily in totals.values():
+        _round_accumulated_costs(daily)
+        for breakdown in daily.breakdowns.values():
+            _round_accumulated_costs(breakdown)
+    for activity in activity_totals.values():
+        _round_accumulated_costs(activity)
 
     return totals, activity_totals
 
