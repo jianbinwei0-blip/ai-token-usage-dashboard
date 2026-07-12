@@ -1463,20 +1463,30 @@ def collect_claude_usage_data(
             cache_write_tokens=cache_creation_input_tokens,
         )
 
-        apply_usage_to_daily(
-            daily,
-            agent_cli=agent_cli,
-            model=model,
-            input_tokens=input_tokens,
-            output_tokens=output_tokens,
-            cached_tokens=cached_tokens,
-            total_tokens=request_total,
-            input_cost_usd=priced.input_cost_usd,
-            output_cost_usd=priced.output_cost_usd,
-            cached_cost_usd=priced.cached_cost_usd,
-            total_cost_usd=priced.total_cost_usd,
-            cost_complete=priced.cost_complete,
-        )
+        daily.input_tokens += input_tokens
+        daily.output_tokens += output_tokens
+        daily.cached_tokens += cached_tokens
+        daily.total_tokens += request_total
+        daily.input_cost_usd += priced.input_cost_usd
+        daily.output_cost_usd += priced.output_cost_usd
+        daily.cached_cost_usd += priced.cached_cost_usd
+        daily.total_cost_usd += priced.total_cost_usd
+        daily.cost_complete = daily.cost_complete and priced.cost_complete
+
+        breakdown_key = (agent_cli, model)
+        breakdown = daily.breakdowns.get(breakdown_key)
+        if breakdown is None:
+            breakdown = BreakdownTotals(agent_cli=agent_cli, model=model)
+            daily.breakdowns[breakdown_key] = breakdown
+        breakdown.input_tokens += input_tokens
+        breakdown.output_tokens += output_tokens
+        breakdown.cached_tokens += cached_tokens
+        breakdown.total_tokens += request_total
+        breakdown.input_cost_usd += priced.input_cost_usd
+        breakdown.output_cost_usd += priced.output_cost_usd
+        breakdown.cached_cost_usd += priced.cached_cost_usd
+        breakdown.total_cost_usd += priced.total_cost_usd
+        breakdown.cost_complete = breakdown.cost_complete and priced.cost_complete
 
         session_id = normalized_bucket_value(request.get("session_id"), "unknown-session")
         daily_sessions.setdefault(usage_date, set()).add(session_id)
@@ -1527,7 +1537,7 @@ def collect_claude_usage_data(
     for (usage_date, agent_cli, model), sessions in bucket_sessions.items():
         daily = totals.get(usage_date)
         if daily is not None:
-            daily.add_breakdown(agent_cli=agent_cli, model=model, sessions=len(sessions))
+            daily.breakdowns[(agent_cli, model)].sessions = len(sessions)
 
     for session_activity in daily_session_usage.values():
         timestamp = session_activity.get("timestamp")
@@ -1547,6 +1557,11 @@ def collect_claude_usage_data(
             total_cost_usd=float(session_activity.get("total_cost_usd") or 0.0),
             cost_complete=bool(session_activity.get("cost_complete", True)),
         )
+
+    for daily in totals.values():
+        _round_accumulated_costs(daily)
+        for breakdown in daily.breakdowns.values():
+            _round_accumulated_costs(breakdown)
 
     return totals, activity_totals
 
