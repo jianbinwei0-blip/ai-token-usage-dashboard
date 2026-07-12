@@ -41,11 +41,12 @@ CLAUDE_BUILTIN_COMMANDS = frozenset(
 )
 CodexContribution = tuple[object, ...]
 ClaudeRequestRecord = tuple[str, str, dt.datetime, int, int, int, int, int, str]
+ClaudeAttributionEvent = tuple[str, str, str, dt.datetime]
 
 
 _CODEX_SESSION_USAGE_CACHE: dict[str, tuple[int, int, str, CodexContribution | None]] = {}
 _CLAUDE_REQUEST_RECORDS_CACHE: dict[str, tuple[int, int, list[ClaudeRequestRecord]]] = {}
-_CLAUDE_ATTRIBUTION_EVENTS_CACHE: dict[str, tuple[int, int, list[dict[str, object]]]] = {}
+_CLAUDE_ATTRIBUTION_EVENTS_CACHE: dict[str, tuple[int, int, list[ClaudeAttributionEvent]]] = {}
 _PI_SESSION_RECORDS_CACHE: dict[str, tuple[int, int, dict[str, object]]] = {}
 _JSONL_FILE_INDEX_CACHE: dict[str, tuple[dict[str, int], tuple[str, ...]]] = {}
 _PERSISTENT_CACHE_VERSION = 4
@@ -193,6 +194,32 @@ def _deserialize_claude_request_record(record: object) -> ClaudeRequestRecord | 
         safe_non_negative_int(values[7]),
         normalized_bucket_value(values[8], DEFAULT_MODEL),
     )
+
+
+def _serialize_claude_attribution_event(event: ClaudeAttributionEvent) -> list[object]:
+    category, name, session_id, timestamp = event
+    return [category, name, session_id, serialize_timestamp(timestamp)]
+
+
+def _deserialize_claude_attribution_event(event: object) -> ClaudeAttributionEvent | None:
+    if isinstance(event, dict):
+        values = (
+            event.get("category"),
+            event.get("name"),
+            event.get("session_id"),
+            event.get("timestamp"),
+        )
+    elif isinstance(event, list) and len(event) == 4:
+        values = tuple(event)
+    else:
+        return None
+
+    category = normalized_bucket_value(values[0], "")
+    name = normalized_bucket_value(values[1], "")
+    timestamp = values[3] if isinstance(values[3], dt.datetime) else deserialize_timestamp(values[3])
+    if not category or not name or timestamp is None:
+        return None
+    return category, name, normalized_bucket_value(values[2], ""), timestamp
 
 
 def _serialize_codex_contribution(contribution: CodexContribution | None) -> list[object] | None:
@@ -471,15 +498,29 @@ def load_persistent_parse_caches(cache_path: Path | None) -> None:
     claude_attribution_payload = payload.get("claude_attribution")
     if isinstance(claude_attribution_payload, dict):
         for file_path, entry in claude_attribution_payload.items():
-            if not isinstance(entry, dict):
+            legacy_entry = isinstance(entry, dict)
+            if legacy_entry:
+                size_value = entry.get("size")
+                mtime_ns_value = entry.get("mtime_ns")
+                events_payload = entry.get("events")
+            elif isinstance(entry, list) and len(entry) == 3:
+                size_value, mtime_ns_value, events_payload = entry
+            else:
                 continue
-            size = safe_non_negative_int(entry.get("size"))
-            mtime_ns = safe_non_negative_int(entry.get("mtime_ns"))
-            events_payload = entry.get("events")
             if not isinstance(events_payload, list):
                 continue
-            events = [event for item in events_payload if (event := _deserialize_record(item)) is not None]
-            _CLAUDE_ATTRIBUTION_EVENTS_CACHE[file_path] = (size, mtime_ns, events)
+            events = [
+                event
+                for item in events_payload
+                if (event := _deserialize_claude_attribution_event(item)) is not None
+            ]
+            _CLAUDE_ATTRIBUTION_EVENTS_CACHE[file_path] = (
+                safe_non_negative_int(size_value),
+                safe_non_negative_int(mtime_ns_value),
+                events,
+            )
+            if legacy_entry or any(isinstance(item, dict) for item in events_payload):
+                _PERSISTENT_CACHE_DIRTY = True
 
     pi_payload = payload.get("pi")
     if isinstance(pi_payload, dict):
@@ -527,11 +568,11 @@ def save_persistent_parse_caches(cache_path: Path | None) -> None:
             for file_path, (size, mtime_ns, records) in _CLAUDE_REQUEST_RECORDS_CACHE.items()
         },
         "claude_attribution": {
-            file_path: {
-                "size": size,
-                "mtime_ns": mtime_ns,
-                "events": [_serialize_record(event) for event in events],
-            }
+            file_path: [
+                size,
+                mtime_ns,
+                [_serialize_claude_attribution_event(event) for event in events],
+            ]
             for file_path, (size, mtime_ns, events) in _CLAUDE_ATTRIBUTION_EVENTS_CACHE.items()
         },
         "pi": {
@@ -1149,7 +1190,7 @@ def normalize_claude_skill_name(value: object) -> str:
 
 
 def add_claude_attribution_event(
-    events: list[dict[str, object]],
+    events: list[ClaudeAttributionEvent],
     seen: set[tuple[str, str, str, str]],
     *,
     category: str,
@@ -1166,14 +1207,7 @@ def add_claude_attribution_event(
     if dedupe_key in seen:
         return
     seen.add(dedupe_key)
-    events.append(
-        {
-            "category": category,
-            "name": normalized_name,
-            "session_id": session_id,
-            "timestamp": timestamp,
-        }
-    )
+    events.append((category, normalized_name, session_id, timestamp))
 
 
 def normalize_claude_tool_name(tool_name: object) -> str:
@@ -1238,9 +1272,9 @@ def extension_name_from_tool_name(tool_name: str) -> str:
     return normalized_bucket_value(parts[1] if len(parts) > 1 else "", "")
 
 
-def parse_claude_attribution_events(file_path: Path) -> list[dict[str, object]]:
+def parse_claude_attribution_events(file_path: Path) -> list[ClaudeAttributionEvent]:
     session_scope = file_path.stem
-    events: list[dict[str, object]] = []
+    events: list[ClaudeAttributionEvent] = []
     seen: set[tuple[str, str, str, str]] = set()
 
     with file_path.open("r", encoding="utf-8", errors="ignore") as handle:
@@ -1370,7 +1404,7 @@ def parse_claude_attribution_events(file_path: Path) -> list[dict[str, object]]:
     return events
 
 
-def parse_claude_attribution_events_cached(file_path) -> list[dict[str, object]]:
+def parse_claude_attribution_events_cached(file_path) -> list[ClaudeAttributionEvent]:
     try:
         stat = os.stat(file_path)
     except OSError:
@@ -1391,7 +1425,7 @@ def parse_claude_attribution_events_cached(file_path) -> list[dict[str, object]]
 
 def apply_claude_session_attribution(
     daily: DailyTotals,
-    events: list[dict[str, object]],
+    events: list[ClaudeAttributionEvent],
     session_activity: dict[str, object],
 ) -> None:
     if not events:
@@ -1399,11 +1433,7 @@ def apply_claude_session_attribution(
 
     grouped: Counter[tuple[str, str]] = Counter()
     category_events: Counter[str] = Counter()
-    for event in events:
-        category = normalized_bucket_value(event.get("category"), "")
-        name = normalized_bucket_value(event.get("name"), "")
-        if not category or not name:
-            continue
+    for category, name, _session_id, _timestamp in events:
         grouped[(category, name)] += 1
         category_events[category] += 1
 
@@ -1451,17 +1481,16 @@ def collect_claude_usage_data(
 
     catalog = pricing_catalog or PricingCatalog.from_file(None)
     request_usage: dict[tuple[str, str], ClaudeRequestRecord] = {}
-    attribution_events_by_session_date: dict[tuple[dt.date, str], list[dict[str, object]]] = defaultdict(list)
+    attribution_events_by_session_date: dict[tuple[dt.date, str], list[ClaudeAttributionEvent]] = defaultdict(list)
     live_cache_keys: set[str] = set()
 
     for file_path in iter_jsonl_files(claude_projects_root):
         live_cache_keys.add(os.fspath(file_path))
         file_stem = path_stem(file_path)
         for attribution_event in parse_claude_attribution_events_cached(file_path):
-            timestamp = attribution_event.get("timestamp")
-            if not isinstance(timestamp, dt.datetime):
-                continue
-            session_id = normalized_bucket_value(attribution_event.get("session_id"), file_stem)
+            _category, _name, session_id, timestamp = attribution_event
+            if not session_id:
+                session_id = file_stem
             attribution_events_by_session_date[(timestamp.date(), session_id)].append(attribution_event)
 
         for record in parse_claude_request_records_cached(file_path):
