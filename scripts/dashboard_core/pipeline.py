@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import datetime as dt
 import time
-from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 from .aggregation import (
@@ -75,48 +74,31 @@ def recalc_dashboard(
 
     measure("load_persistent_parse_caches", lambda: load_persistent_parse_caches(config.parse_cache_file))
 
-    def collect_provider_data_parallel() -> tuple[
+    def collect_provider_data() -> tuple[
         tuple[dict, dict],
         tuple[dict, dict],
         tuple[dict, dict],
     ]:
-        provider_timings: dict[str, float] = {}
-
-        def timed_collect(label: str, func):
-            started = time.perf_counter()
-            result = func()
-            provider_timings[label] = (time.perf_counter() - started) * 1000.0
-            return result
-
-        with ThreadPoolExecutor(max_workers=3) as executor:
-            codex_future = executor.submit(
-                timed_collect,
-                "codex_collect",
-                lambda: collect_codex_usage_data(config.sessions_root, pricing_catalog=pricing_catalog),
-            )
-            claude_future = executor.submit(
-                timed_collect,
-                "claude_collect",
-                lambda: collect_claude_usage_data(
-                    config.claude_projects_root,
-                    pricing_catalog=pricing_catalog,
-                ),
-            )
-            pi_future = executor.submit(
-                timed_collect,
-                "pi_collect",
-                lambda: collect_pi_usage_data(config.pi_agent_root, pricing_catalog=pricing_catalog),
-            )
-            codex_result = codex_future.result()
-            claude_result = claude_future.result()
-            pi_result = pi_future.result()
-
-        timings_ms.update(provider_timings)
+        codex_result = measure(
+            "codex_collect",
+            lambda: collect_codex_usage_data(config.sessions_root, pricing_catalog=pricing_catalog),
+        )
+        claude_result = measure(
+            "claude_collect",
+            lambda: collect_claude_usage_data(
+                config.claude_projects_root,
+                pricing_catalog=pricing_catalog,
+            ),
+        )
+        pi_result = measure(
+            "pi_collect",
+            lambda: collect_pi_usage_data(config.pi_agent_root, pricing_catalog=pricing_catalog),
+        )
         return codex_result, claude_result, pi_result
 
     (codex_daily_all, codex_activity_all), (claude_daily_all, claude_activity_all), (pi_daily_all, pi_activity_all) = measure(
-        "provider_collect_parallel",
-        collect_provider_data_parallel,
+        "provider_collect",
+        collect_provider_data,
     )
     measure("save_persistent_parse_caches", lambda: save_persistent_parse_caches(config.parse_cache_file))
     combined_daily_all = measure("combine_daily", lambda: combine_daily_totals(codex_daily_all, claude_daily_all, pi_daily_all))
