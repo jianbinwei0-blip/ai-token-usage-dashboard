@@ -21,6 +21,40 @@ DAILY_USAGE_TBODY_PATTERN = re.compile(r'<tbody id="dailyUsageTableBody">.*?</tb
 BREAKDOWN_TBODY_PATTERN = re.compile(r'<tbody id="usageBreakdownTableBody">.*?</tbody>', re.DOTALL)
 
 
+def _identified_element_span(html: str, tag: str, element_id: str) -> tuple[int, int] | None:
+    start = html.find(f'<{tag} id="{element_id}"')
+    if start < 0:
+        return None
+    close_tag = f"</{tag}>"
+    close_start = html.find(close_tag, start)
+    if close_start < 0:
+        return None
+    return start, close_start + len(close_tag)
+
+
+def _replace_identified_elements(
+    html: str,
+    replacements: tuple[tuple[str, str, str], ...],
+) -> str | None:
+    spans: list[tuple[int, int, str]] = []
+    for tag, element_id, replacement in replacements:
+        span = _identified_element_span(html, tag, element_id)
+        if span is None:
+            return None
+        spans.append((span[0], span[1], replacement))
+
+    spans.sort(key=lambda item: item[0])
+    pieces: list[str] = []
+    cursor = 0
+    for start, end, replacement in spans:
+        if start < cursor:
+            return None
+        pieces.extend((html[cursor:start], replacement))
+        cursor = end
+    pieces.append(html[cursor:])
+    return "".join(pieces)
+
+
 def format_number(value: int) -> str:
     return f"{value:,}"
 
@@ -261,9 +295,13 @@ def build_breakdown_table_body(rows: list[dict[str, int | float | str | bool]]) 
     return "<tbody id=\"usageBreakdownTableBody\">\n" + "\n".join(row_lines) + "\n          </tbody>"
 
 
-def inject_usage_dataset(html: str, dataset: dict) -> str:
+def build_usage_dataset_script(dataset: dict) -> str:
     dataset_json = json.dumps(dataset, separators=(",", ":"))
-    script = f'<script id="usageDataset" type="application/json">{dataset_json}</script>'
+    return f'<script id="usageDataset" type="application/json">{dataset_json}</script>'
+
+
+def inject_usage_dataset(html: str, dataset: dict) -> str:
+    script = build_usage_dataset_script(dataset)
 
     if USAGE_DATASET_PATTERN.search(html):
         return USAGE_DATASET_PATTERN.sub(script, html, count=1)
@@ -331,6 +369,20 @@ def rewrite_dashboard_html(
     breakdown_body: str,
     dataset: dict,
 ) -> str:
+    dataset_script = build_usage_dataset_script(dataset)
+    fast_updated = _replace_identified_elements(
+        html,
+        (
+            ("section", "fixedStats", fixed_stats_section.lstrip(" \t")),
+            ("section", "rangeStats", range_stats_section.lstrip(" \t")),
+            ("tbody", "dailyUsageTableBody", table_body),
+            ("tbody", "usageBreakdownTableBody", breakdown_body),
+            ("script", "usageDataset", dataset_script),
+        ),
+    )
+    if fast_updated is not None:
+        return rewrite_provider_select(fast_updated, dataset)
+
     updated = html
     if FIXED_STATS_SECTION_PATTERN.search(updated) and RANGE_STATS_SECTION_PATTERN.search(updated):
         updated = FIXED_STATS_SECTION_PATTERN.sub(fixed_stats_section, updated, count=1)
