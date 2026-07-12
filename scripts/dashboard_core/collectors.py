@@ -162,37 +162,40 @@ def _serialize_claude_request_record(record: ClaudeRequestRecord) -> list[object
 
 
 def _deserialize_claude_request_record(record: object) -> ClaudeRequestRecord | None:
-    if isinstance(record, dict):
-        values = (
-            record.get("session_id"),
-            record.get("request_id"),
-            record.get("timestamp"),
-            record.get("input_tokens"),
-            record.get("cache_creation_input_tokens"),
-            record.get("cache_read_input_tokens"),
-            record.get("cached_tokens"),
-            record.get("output_tokens"),
-            record.get("model"),
+    if isinstance(record, list) and len(record) == 9:
+        request_id = record[1] if isinstance(record[1], str) else ""
+        timestamp = deserialize_timestamp(record[2])
+        if not request_id or timestamp is None:
+            return None
+        return (
+            record[0] if isinstance(record[0], str) else "",
+            request_id,
+            timestamp,
+            record[3],
+            record[4],
+            record[5],
+            record[6],
+            record[7],
+            record[8] if isinstance(record[8], str) and record[8] else DEFAULT_MODEL,
         )
-    elif isinstance(record, list) and len(record) == 9:
-        values = tuple(record)
-    else:
+    if not isinstance(record, dict):
         return None
 
-    request_id = normalized_bucket_value(values[1], "")
-    timestamp = values[2] if isinstance(values[2], dt.datetime) else deserialize_timestamp(values[2])
+    request_id = normalized_bucket_value(record.get("request_id"), "")
+    timestamp_value = record.get("timestamp")
+    timestamp = timestamp_value if isinstance(timestamp_value, dt.datetime) else deserialize_timestamp(timestamp_value)
     if not request_id or timestamp is None:
         return None
     return (
-        normalized_bucket_value(values[0], ""),
+        normalized_bucket_value(record.get("session_id"), ""),
         request_id,
         timestamp,
-        safe_non_negative_int(values[3]),
-        safe_non_negative_int(values[4]),
-        safe_non_negative_int(values[5]),
-        safe_non_negative_int(values[6]),
-        safe_non_negative_int(values[7]),
-        normalized_bucket_value(values[8], DEFAULT_MODEL),
+        safe_non_negative_int(record.get("input_tokens")),
+        safe_non_negative_int(record.get("cache_creation_input_tokens")),
+        safe_non_negative_int(record.get("cache_read_input_tokens")),
+        safe_non_negative_int(record.get("cached_tokens")),
+        safe_non_negative_int(record.get("output_tokens")),
+        normalized_bucket_value(record.get("model"), DEFAULT_MODEL),
     )
 
 
@@ -202,24 +205,23 @@ def _serialize_claude_attribution_event(event: ClaudeAttributionEvent) -> list[o
 
 
 def _deserialize_claude_attribution_event(event: object) -> ClaudeAttributionEvent | None:
-    if isinstance(event, dict):
-        values = (
-            event.get("category"),
-            event.get("name"),
-            event.get("session_id"),
-            event.get("timestamp"),
-        )
-    elif isinstance(event, list) and len(event) == 4:
-        values = tuple(event)
-    else:
+    if isinstance(event, list) and len(event) == 4:
+        category = event[0] if isinstance(event[0], str) else ""
+        name = event[1] if isinstance(event[1], str) else ""
+        timestamp = deserialize_timestamp(event[3])
+        if not category or not name or timestamp is None:
+            return None
+        return category, name, event[2] if isinstance(event[2], str) else "", timestamp
+    if not isinstance(event, dict):
         return None
 
-    category = normalized_bucket_value(values[0], "")
-    name = normalized_bucket_value(values[1], "")
-    timestamp = values[3] if isinstance(values[3], dt.datetime) else deserialize_timestamp(values[3])
+    category = normalized_bucket_value(event.get("category"), "")
+    name = normalized_bucket_value(event.get("name"), "")
+    timestamp_value = event.get("timestamp")
+    timestamp = timestamp_value if isinstance(timestamp_value, dt.datetime) else deserialize_timestamp(timestamp_value)
     if not category or not name or timestamp is None:
         return None
-    return category, name, normalized_bucket_value(values[2], ""), timestamp
+    return category, name, normalized_bucket_value(event.get("session_id"), ""), timestamp
 
 
 def _serialize_codex_contribution(contribution: CodexContribution | None) -> list[object] | None:
@@ -262,46 +264,47 @@ def _serialize_codex_contribution(contribution: CodexContribution | None) -> lis
 def _deserialize_codex_contribution(contribution: object) -> CodexContribution | None:
     if contribution is None:
         return None
-    if isinstance(contribution, dict):
-        values = (
-            contribution.get("usage_date"),
-            contribution.get("timestamp"),
-            contribution.get("session_id"),
-            contribution.get("agent_cli"),
-            contribution.get("model"),
-            contribution.get("input_tokens"),
-            contribution.get("output_tokens"),
-            contribution.get("cached_tokens"),
-            contribution.get("total_tokens"),
-            contribution.get("input_cost_usd"),
-            contribution.get("output_cost_usd"),
-            contribution.get("cached_cost_usd"),
-            contribution.get("total_cost_usd"),
-            contribution.get("cost_complete", True),
+    if isinstance(contribution, list) and len(contribution) == 14:
+        usage_date = contribution[0]
+        if not isinstance(usage_date, str):
+            return None
+        return (
+            usage_date,
+            deserialize_timestamp(contribution[1]),
+            contribution[2] if isinstance(contribution[2], str) else "",
+            contribution[3] if isinstance(contribution[3], str) and contribution[3] else "codex",
+            contribution[4] if isinstance(contribution[4], str) and contribution[4] else DEFAULT_MODEL,
+            contribution[5],
+            contribution[6],
+            contribution[7],
+            contribution[8],
+            float(contribution[9] or 0.0),
+            float(contribution[10] or 0.0),
+            float(contribution[11] or 0.0),
+            float(contribution[12] or 0.0),
+            bool(contribution[13]),
         )
-    elif isinstance(contribution, list) and len(contribution) == 14:
-        values = tuple(contribution)
-    else:
+    if not isinstance(contribution, dict):
         return None
 
-    usage_date = values[0]
+    usage_date = contribution.get("usage_date")
     if not isinstance(usage_date, str):
         return None
     return (
         usage_date,
-        deserialize_timestamp(values[1]),
-        normalized_bucket_value(values[2], ""),
-        normalized_bucket_value(values[3], "codex"),
-        normalized_bucket_value(values[4], DEFAULT_MODEL),
-        safe_non_negative_int(values[5]),
-        safe_non_negative_int(values[6]),
-        safe_non_negative_int(values[7]),
-        safe_non_negative_int(values[8]),
-        float(values[9] or 0.0),
-        float(values[10] or 0.0),
-        float(values[11] or 0.0),
-        float(values[12] or 0.0),
-        bool(values[13]),
+        deserialize_timestamp(contribution.get("timestamp")),
+        normalized_bucket_value(contribution.get("session_id"), ""),
+        normalized_bucket_value(contribution.get("agent_cli"), "codex"),
+        normalized_bucket_value(contribution.get("model"), DEFAULT_MODEL),
+        safe_non_negative_int(contribution.get("input_tokens")),
+        safe_non_negative_int(contribution.get("output_tokens")),
+        safe_non_negative_int(contribution.get("cached_tokens")),
+        safe_non_negative_int(contribution.get("total_tokens")),
+        float(contribution.get("input_cost_usd") or 0.0),
+        float(contribution.get("output_cost_usd") or 0.0),
+        float(contribution.get("cached_cost_usd") or 0.0),
+        float(contribution.get("total_cost_usd") or 0.0),
+        bool(contribution.get("cost_complete", True)),
     )
 
 
