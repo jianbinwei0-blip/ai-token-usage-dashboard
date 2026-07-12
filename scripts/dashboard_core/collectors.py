@@ -102,6 +102,16 @@ def _mark_persistent_cache_dirty() -> None:
     _PERSISTENT_CACHE_DIRTY = True
 
 
+def _prune_cache_for_root(cache: dict, root: Path, live_keys: set[str]) -> None:
+    root_prefix = os.path.join(str(root), "")
+    stale_keys = [key for key in cache if key.startswith(root_prefix) and key not in live_keys]
+    if not stale_keys:
+        return
+    for key in stale_keys:
+        del cache[key]
+    _mark_persistent_cache_dirty()
+
+
 def _serialize_record(record: dict[str, object]) -> dict[str, object]:
     serialized = dict(record)
     serialized["timestamp"] = serialize_timestamp(record.get("timestamp"))
@@ -639,8 +649,10 @@ def collect_codex_usage_data(
 
     catalog = pricing_catalog or PricingCatalog.from_file(None)
     bucket_sessions: dict[tuple[dt.date, str, str], set[str]] = {}
+    live_cache_keys: set[str] = set()
 
     for file_path in iter_jsonl_files(sessions_root):
+        live_cache_keys.add(str(file_path))
         contribution = parse_codex_session_usage_cached(file_path, sessions_root, catalog)
         if contribution is None:
             continue
@@ -701,6 +713,8 @@ def collect_codex_usage_data(
             total_cost_usd=total_cost_usd,
             cost_complete=cost_complete,
         )
+
+    _prune_cache_for_root(_CODEX_SESSION_USAGE_CACHE, sessions_root, live_cache_keys)
 
     for (usage_date, agent_cli, model), sessions in bucket_sessions.items():
         daily = totals.get(usage_date)
@@ -1151,8 +1165,10 @@ def collect_claude_usage_data(
     catalog = pricing_catalog or PricingCatalog.from_file(None)
     request_usage: dict[tuple[str, str], dict[str, object]] = {}
     attribution_events_by_session_date: dict[tuple[dt.date, str], list[dict[str, object]]] = defaultdict(list)
+    live_cache_keys: set[str] = set()
 
     for file_path in iter_jsonl_files(claude_projects_root):
+        live_cache_keys.add(str(file_path))
         for attribution_event in parse_claude_attribution_events_cached(file_path):
             timestamp = attribution_event.get("timestamp")
             if not isinstance(timestamp, dt.datetime):
@@ -1206,6 +1222,9 @@ def collect_claude_usage_data(
             current["output_tokens"] = max(safe_non_negative_int(current.get("output_tokens")), output_tokens)
             if model != DEFAULT_MODEL:
                 current["model"] = model
+
+    _prune_cache_for_root(_CLAUDE_REQUEST_RECORDS_CACHE, claude_projects_root, live_cache_keys)
+    _prune_cache_for_root(_CLAUDE_ATTRIBUTION_EVENTS_CACHE, claude_projects_root, live_cache_keys)
 
     daily_sessions: dict[dt.date, set[str]] = {}
     bucket_sessions: dict[tuple[dt.date, str, str], set[str]] = {}
@@ -1566,8 +1585,10 @@ def collect_pi_usage_data(
     catalog = pricing_catalog or PricingCatalog.from_file(None)
     daily_sessions: dict[dt.date, set[str]] = {}
     bucket_sessions: dict[tuple[dt.date, str, str], set[str]] = {}
+    live_cache_keys: set[str] = set()
 
     for file_path in iter_jsonl_files(sessions_root):
+        live_cache_keys.add(str(file_path))
         contribution = parse_pi_session_contribution_cached(file_path)
         session_id = normalized_bucket_value(contribution.get("session_id"), file_path.stem)
         usage_rows = contribution.get("usage_rows")
@@ -1689,6 +1710,8 @@ def collect_pi_usage_data(
                 total_cost_usd=float(activity.get("total_cost_usd") or 0.0),
                 cost_complete=bool(activity.get("cost_complete", True)),
             )
+
+    _prune_cache_for_root(_PI_SESSION_RECORDS_CACHE, sessions_root, live_cache_keys)
 
     for usage_date, sessions in daily_sessions.items():
         if usage_date in totals:
