@@ -8,7 +8,7 @@ import re
 from collections import Counter, defaultdict
 from pathlib import Path
 
-from .models import ActivityTotals, DailyTotals
+from .models import ActivityTotals, BreakdownTotals, DailyTotals, round_cost
 from .pricing import PricingCatalog
 
 
@@ -500,6 +500,13 @@ def codex_usage_date_from_path(session_path: Path, sessions_root: Path) -> dt.da
         return None
 
 
+def _round_accumulated_costs(totals: ActivityTotals | BreakdownTotals | DailyTotals) -> None:
+    totals.input_cost_usd = round_cost(totals.input_cost_usd)
+    totals.output_cost_usd = round_cost(totals.output_cost_usd)
+    totals.cached_cost_usd = round_cost(totals.cached_cost_usd)
+    totals.total_cost_usd = round_cost(totals.total_cost_usd)
+
+
 def apply_usage_to_daily(
     daily: DailyTotals,
     *,
@@ -859,44 +866,66 @@ def collect_codex_usage_data(
         if not session_id:
             session_id = path_stem(file_path)
 
-        daily = totals.setdefault(usage_date, DailyTotals(date=usage_date))
+        daily = totals.get(usage_date)
+        if daily is None:
+            daily = DailyTotals(date=usage_date)
+            totals[usage_date] = daily
         daily.sessions += 1
-        apply_usage_to_daily(
-            daily,
-            agent_cli=agent_cli,
-            model=model,
-            input_tokens=input_tokens,
-            output_tokens=output_tokens,
-            cached_tokens=cached_tokens,
-            total_tokens=total_tokens,
-            input_cost_usd=input_cost_usd,
-            output_cost_usd=output_cost_usd,
-            cached_cost_usd=cached_cost_usd,
-            total_cost_usd=total_cost_usd,
-            cost_complete=cost_complete,
-        )
+        daily.input_tokens += input_tokens
+        daily.output_tokens += output_tokens
+        daily.cached_tokens += cached_tokens
+        daily.total_tokens += total_tokens
+        daily.input_cost_usd += input_cost_usd
+        daily.output_cost_usd += output_cost_usd
+        daily.cached_cost_usd += cached_cost_usd
+        daily.total_cost_usd += total_cost_usd
+        daily.cost_complete = daily.cost_complete and cost_complete
+
+        breakdown_key = (agent_cli, model)
+        breakdown = daily.breakdowns.get(breakdown_key)
+        if breakdown is None:
+            breakdown = BreakdownTotals(agent_cli=agent_cli, model=model)
+            daily.breakdowns[breakdown_key] = breakdown
+        breakdown.input_tokens += input_tokens
+        breakdown.output_tokens += output_tokens
+        breakdown.cached_tokens += cached_tokens
+        breakdown.total_tokens += total_tokens
+        breakdown.input_cost_usd += input_cost_usd
+        breakdown.output_cost_usd += output_cost_usd
+        breakdown.cached_cost_usd += cached_cost_usd
+        breakdown.total_cost_usd += total_cost_usd
+        breakdown.cost_complete = breakdown.cost_complete and cost_complete
         bucket_sessions.setdefault((usage_date, agent_cli, model), set()).add(session_id)
-        add_usage_to_activity(
-            activity_totals,
-            activity_timestamp,
-            sessions=1,
-            input_tokens=input_tokens,
-            output_tokens=output_tokens,
-            cached_tokens=cached_tokens,
-            total_tokens=total_tokens,
-            input_cost_usd=input_cost_usd,
-            output_cost_usd=output_cost_usd,
-            cached_cost_usd=cached_cost_usd,
-            total_cost_usd=total_cost_usd,
-            cost_complete=cost_complete,
-        )
+
+        activity_key = (activity_timestamp.date(), activity_timestamp.hour)
+        activity = activity_totals.get(activity_key)
+        if activity is None:
+            activity = ActivityTotals(date=activity_key[0], hour=activity_key[1])
+            activity_totals[activity_key] = activity
+        activity.sessions += 1
+        activity.input_tokens += input_tokens
+        activity.output_tokens += output_tokens
+        activity.cached_tokens += cached_tokens
+        activity.total_tokens += total_tokens
+        activity.input_cost_usd += input_cost_usd
+        activity.output_cost_usd += output_cost_usd
+        activity.cached_cost_usd += cached_cost_usd
+        activity.total_cost_usd += total_cost_usd
+        activity.cost_complete = activity.cost_complete and cost_complete
 
     _prune_cache_for_root(_CODEX_SESSION_USAGE_CACHE, sessions_root, live_cache_keys)
 
     for (usage_date, agent_cli, model), sessions in bucket_sessions.items():
         daily = totals.get(usage_date)
         if daily is not None:
-            daily.add_breakdown(agent_cli=agent_cli, model=model, sessions=len(sessions))
+            daily.breakdowns[(agent_cli, model)].sessions = len(sessions)
+
+    for daily in totals.values():
+        _round_accumulated_costs(daily)
+        for breakdown in daily.breakdowns.values():
+            _round_accumulated_costs(breakdown)
+    for activity in activity_totals.values():
+        _round_accumulated_costs(activity)
 
     return totals, activity_totals
 
