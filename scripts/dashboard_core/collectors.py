@@ -223,7 +223,8 @@ def _serialize_codex_contribution(contribution: CodexContribution | None) -> lis
         return None
     (
         usage_date,
-        timestamp,
+        activity_date,
+        activity_hour,
         session_id,
         agent_cli,
         model,
@@ -238,9 +239,10 @@ def _serialize_codex_contribution(contribution: CodexContribution | None) -> lis
         cost_complete,
     ) = contribution
     return [
-        "n",
-        usage_date,
-        serialize_timestamp(timestamp),
+        "t",
+        usage_date.toordinal(),
+        activity_date.toordinal(),
+        activity_hour,
         session_id,
         agent_cli,
         model,
@@ -256,16 +258,51 @@ def _serialize_codex_contribution(contribution: CodexContribution | None) -> lis
     ]
 
 
+def _legacy_codex_dates(usage_date_value: object, timestamp_value: object) -> tuple[dt.date, dt.date, int] | None:
+    if not isinstance(usage_date_value, str):
+        return None
+    try:
+        usage_date = dt.date.fromisoformat(usage_date_value)
+    except ValueError:
+        return None
+    timestamp = timestamp_value if isinstance(timestamp_value, dt.datetime) else deserialize_timestamp(timestamp_value)
+    if timestamp is None:
+        return usage_date, usage_date, 0
+    return usage_date, timestamp.date(), timestamp.hour
+
+
 def _deserialize_codex_contribution(contribution: object) -> CodexContribution | None:
     if contribution is None:
         return None
-    if isinstance(contribution, list) and len(contribution) == 15 and contribution[0] == "n":
-        usage_date = contribution[1]
-        if not isinstance(usage_date, str):
+    if isinstance(contribution, list) and len(contribution) == 16 and contribution[0] == "t":
+        try:
+            usage_date = dt.date.fromordinal(contribution[1])
+            activity_date = dt.date.fromordinal(contribution[2])
+        except (TypeError, ValueError):
             return None
         return (
             usage_date,
-            deserialize_timestamp(contribution[2]),
+            activity_date,
+            contribution[3],
+            contribution[4] if isinstance(contribution[4], str) else "",
+            contribution[5] if isinstance(contribution[5], str) and contribution[5] else "codex",
+            contribution[6] if isinstance(contribution[6], str) and contribution[6] else DEFAULT_MODEL,
+            contribution[7],
+            contribution[8],
+            contribution[9],
+            contribution[10],
+            contribution[11],
+            contribution[12],
+            contribution[13],
+            contribution[14],
+            bool(contribution[15]),
+        )
+    if isinstance(contribution, list) and len(contribution) == 15 and contribution[0] == "n":
+        dates = _legacy_codex_dates(contribution[1], contribution[2])
+        if dates is None:
+            return None
+        return (
+            *dates,
             contribution[3] if isinstance(contribution[3], str) else "",
             contribution[4] if isinstance(contribution[4], str) and contribution[4] else "codex",
             contribution[5] if isinstance(contribution[5], str) and contribution[5] else DEFAULT_MODEL,
@@ -280,12 +317,11 @@ def _deserialize_codex_contribution(contribution: object) -> CodexContribution |
             bool(contribution[14]),
         )
     if isinstance(contribution, list) and len(contribution) == 14:
-        usage_date = contribution[0]
-        if not isinstance(usage_date, str):
+        dates = _legacy_codex_dates(contribution[0], contribution[1])
+        if dates is None:
             return None
         return (
-            usage_date,
-            deserialize_timestamp(contribution[1]),
+            *dates,
             contribution[2] if isinstance(contribution[2], str) else "",
             contribution[3] if isinstance(contribution[3], str) and contribution[3] else "codex",
             contribution[4] if isinstance(contribution[4], str) and contribution[4] else DEFAULT_MODEL,
@@ -302,12 +338,11 @@ def _deserialize_codex_contribution(contribution: object) -> CodexContribution |
     if not isinstance(contribution, dict):
         return None
 
-    usage_date = contribution.get("usage_date")
-    if not isinstance(usage_date, str):
+    dates = _legacy_codex_dates(contribution.get("usage_date"), contribution.get("timestamp"))
+    if dates is None:
         return None
     return (
-        usage_date,
-        deserialize_timestamp(contribution.get("timestamp")),
+        *dates,
         normalized_bucket_value(contribution.get("session_id"), ""),
         normalized_bucket_value(contribution.get("agent_cli"), "codex"),
         normalized_bucket_value(contribution.get("model"), DEFAULT_MODEL),
@@ -563,8 +598,8 @@ def load_persistent_parse_caches(cache_path: Path | None) -> None:
                 contribution_value is not None
                 and not (
                     isinstance(contribution_value, list)
-                    and len(contribution_value) == 15
-                    and contribution_value[0] == "n"
+                    and len(contribution_value) == 16
+                    and contribution_value[0] == "t"
                 )
             ):
                 _PERSISTENT_CACHE_DIRTY = True
@@ -1017,8 +1052,9 @@ def build_codex_session_contribution(
     )
 
     return (
-        usage_date.isoformat(),
-        activity_timestamp,
+        usage_date,
+        activity_timestamp.date(),
+        activity_timestamp.hour,
         session_id,
         agent_cli,
         model,
@@ -1038,6 +1074,7 @@ def parse_codex_session_usage_cached(
     session_path,
     sessions_root: Path,
     pricing_catalog: PricingCatalog,
+    current_pricing_key: str | None = None,
 ) -> CodexContribution | None:
     try:
         stat = os.stat(session_path)
@@ -1047,7 +1084,8 @@ def parse_codex_session_usage_cached(
     cache_key = os.fspath(session_path)
     cached = _CODEX_SESSION_USAGE_CACHE.get(cache_key)
     signature = (stat.st_size, stat.st_mtime_ns)
-    current_pricing_key = pricing_cache_key(pricing_catalog)
+    if current_pricing_key is None:
+        current_pricing_key = pricing_cache_key(pricing_catalog)
     if cached is not None and cached[:2] == signature and cached[2] == current_pricing_key:
         return cached[3]
 
@@ -1069,18 +1107,25 @@ def collect_codex_usage_data(
         return totals, activity_totals
 
     catalog = pricing_catalog or PricingCatalog.from_file(None)
+    current_pricing_key = pricing_cache_key(catalog)
     bucket_sessions: dict[tuple[dt.date, str, str], set[str]] = {}
     live_cache_keys: set[str] = set()
 
     for file_path in iter_jsonl_files(sessions_root):
         live_cache_keys.add(os.fspath(file_path))
-        contribution = parse_codex_session_usage_cached(file_path, sessions_root, catalog)
+        contribution = parse_codex_session_usage_cached(
+            file_path,
+            sessions_root,
+            catalog,
+            current_pricing_key=current_pricing_key,
+        )
         if contribution is None:
             continue
 
         (
-            usage_date_value,
-            activity_timestamp,
+            usage_date,
+            activity_date,
+            activity_hour,
             session_id,
             agent_cli,
             model,
@@ -1094,13 +1139,6 @@ def collect_codex_usage_data(
             total_cost_usd,
             cost_complete,
         ) = contribution
-        try:
-            usage_date = dt.date.fromisoformat(usage_date_value)
-        except ValueError:
-            continue
-
-        if not isinstance(activity_timestamp, dt.datetime):
-            activity_timestamp = dt.datetime.combine(usage_date, dt.time(hour=0), tzinfo=LOCAL_TIMEZONE)
         if not session_id:
             session_id = path_stem(file_path)
 
@@ -1137,7 +1175,7 @@ def collect_codex_usage_data(
         breakdown.cost_complete = breakdown.cost_complete and cost_complete
         bucket_sessions.setdefault((usage_date, agent_cli, model), set()).add(session_id)
 
-        activity_key = (activity_timestamp.date(), activity_timestamp.hour)
+        activity_key = (activity_date, activity_hour)
         activity = activity_totals.get(activity_key)
         if activity is None:
             activity = ActivityTotals(date=activity_key[0], hour=activity_key[1])
