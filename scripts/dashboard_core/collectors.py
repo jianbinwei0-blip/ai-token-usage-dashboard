@@ -13,6 +13,7 @@ from .pricing import PricingCatalog
 
 
 DEFAULT_MODEL = "unknown"
+NANODOLLARS_PER_DOLLAR = 1_000_000_000
 LOCAL_TIMEZONE = dt.datetime.now().astimezone().tzinfo or dt.timezone.utc
 CODEX_ROLLOUT_TIMESTAMP_PATTERN = re.compile(
     r"(\d{4})-(\d{2})-(\d{2})T(\d{2})-(\d{2})-(\d{2})"
@@ -59,6 +60,10 @@ _PI_APPEND_FAST_PATH_WINDOW_BYTES = 4096
 
 def safe_non_negative_int(value: object) -> int:
     return value if isinstance(value, int) and value >= 0 else 0
+
+
+def cost_to_nanodollars(value: object) -> int:
+    return int(round(float(value or 0.0) * NANODOLLARS_PER_DOLLAR))
 
 
 def normalized_bucket_value(value: object, fallback: str) -> str:
@@ -233,6 +238,7 @@ def _serialize_codex_contribution(contribution: CodexContribution | None) -> lis
         cost_complete,
     ) = contribution
     return [
+        "n",
         usage_date,
         serialize_timestamp(timestamp),
         session_id,
@@ -253,6 +259,26 @@ def _serialize_codex_contribution(contribution: CodexContribution | None) -> lis
 def _deserialize_codex_contribution(contribution: object) -> CodexContribution | None:
     if contribution is None:
         return None
+    if isinstance(contribution, list) and len(contribution) == 15 and contribution[0] == "n":
+        usage_date = contribution[1]
+        if not isinstance(usage_date, str):
+            return None
+        return (
+            usage_date,
+            deserialize_timestamp(contribution[2]),
+            contribution[3] if isinstance(contribution[3], str) else "",
+            contribution[4] if isinstance(contribution[4], str) and contribution[4] else "codex",
+            contribution[5] if isinstance(contribution[5], str) and contribution[5] else DEFAULT_MODEL,
+            contribution[6],
+            contribution[7],
+            contribution[8],
+            contribution[9],
+            contribution[10],
+            contribution[11],
+            contribution[12],
+            contribution[13],
+            bool(contribution[14]),
+        )
     if isinstance(contribution, list) and len(contribution) == 14:
         usage_date = contribution[0]
         if not isinstance(usage_date, str):
@@ -267,10 +293,10 @@ def _deserialize_codex_contribution(contribution: object) -> CodexContribution |
             contribution[6],
             contribution[7],
             contribution[8],
-            float(contribution[9] or 0.0),
-            float(contribution[10] or 0.0),
-            float(contribution[11] or 0.0),
-            float(contribution[12] or 0.0),
+            cost_to_nanodollars(contribution[9]),
+            cost_to_nanodollars(contribution[10]),
+            cost_to_nanodollars(contribution[11]),
+            cost_to_nanodollars(contribution[12]),
             bool(contribution[13]),
         )
     if not isinstance(contribution, dict):
@@ -289,10 +315,10 @@ def _deserialize_codex_contribution(contribution: object) -> CodexContribution |
         safe_non_negative_int(contribution.get("output_tokens")),
         safe_non_negative_int(contribution.get("cached_tokens")),
         safe_non_negative_int(contribution.get("total_tokens")),
-        float(contribution.get("input_cost_usd") or 0.0),
-        float(contribution.get("output_cost_usd") or 0.0),
-        float(contribution.get("cached_cost_usd") or 0.0),
-        float(contribution.get("total_cost_usd") or 0.0),
+        cost_to_nanodollars(contribution.get("input_cost_usd")),
+        cost_to_nanodollars(contribution.get("output_cost_usd")),
+        cost_to_nanodollars(contribution.get("cached_cost_usd")),
+        cost_to_nanodollars(contribution.get("total_cost_usd")),
         bool(contribution.get("cost_complete", True)),
     )
 
@@ -533,7 +559,14 @@ def load_persistent_parse_caches(cache_path: Path | None) -> None:
             if not pricing_key:
                 continue
             _CODEX_SESSION_USAGE_CACHE[file_path] = (size, mtime_ns, pricing_key, contribution)
-            if legacy_entry or isinstance(contribution_value, dict):
+            if legacy_entry or (
+                contribution_value is not None
+                and not (
+                    isinstance(contribution_value, list)
+                    and len(contribution_value) == 15
+                    and contribution_value[0] == "n"
+                )
+            ):
                 _PERSISTENT_CACHE_DIRTY = True
 
     claude_payload = payload.get("claude")
@@ -703,6 +736,13 @@ def _round_accumulated_costs(totals: ActivityTotals | BreakdownTotals | DailyTot
     totals.output_cost_usd = round_cost(totals.output_cost_usd)
     totals.cached_cost_usd = round_cost(totals.cached_cost_usd)
     totals.total_cost_usd = round_cost(totals.total_cost_usd)
+
+
+def _materialize_nanodollar_costs(totals: ActivityTotals | BreakdownTotals | DailyTotals) -> None:
+    totals.input_cost_usd /= NANODOLLARS_PER_DOLLAR
+    totals.output_cost_usd /= NANODOLLARS_PER_DOLLAR
+    totals.cached_cost_usd /= NANODOLLARS_PER_DOLLAR
+    totals.total_cost_usd /= NANODOLLARS_PER_DOLLAR
 
 
 def apply_usage_to_daily(
@@ -986,10 +1026,10 @@ def build_codex_session_contribution(
         output_tokens,
         cached_tokens,
         total_tokens,
-        priced.input_cost_usd,
-        priced.output_cost_usd,
-        priced.cached_cost_usd,
-        priced.total_cost_usd,
+        cost_to_nanodollars(priced.input_cost_usd),
+        cost_to_nanodollars(priced.output_cost_usd),
+        cost_to_nanodollars(priced.cached_cost_usd),
+        cost_to_nanodollars(priced.total_cost_usd),
         priced.cost_complete,
     )
 
@@ -1067,6 +1107,7 @@ def collect_codex_usage_data(
         daily = totals.get(usage_date)
         if daily is None:
             daily = DailyTotals(date=usage_date)
+            daily.input_cost_usd = daily.output_cost_usd = daily.cached_cost_usd = daily.total_cost_usd = 0
             totals[usage_date] = daily
         daily.sessions += 1
         daily.input_tokens += input_tokens
@@ -1083,6 +1124,7 @@ def collect_codex_usage_data(
         breakdown = daily.breakdowns.get(breakdown_key)
         if breakdown is None:
             breakdown = BreakdownTotals(agent_cli=agent_cli, model=model)
+            breakdown.input_cost_usd = breakdown.output_cost_usd = breakdown.cached_cost_usd = breakdown.total_cost_usd = 0
             daily.breakdowns[breakdown_key] = breakdown
         breakdown.input_tokens += input_tokens
         breakdown.output_tokens += output_tokens
@@ -1099,6 +1141,7 @@ def collect_codex_usage_data(
         activity = activity_totals.get(activity_key)
         if activity is None:
             activity = ActivityTotals(date=activity_key[0], hour=activity_key[1])
+            activity.input_cost_usd = activity.output_cost_usd = activity.cached_cost_usd = activity.total_cost_usd = 0
             activity_totals[activity_key] = activity
         activity.sessions += 1
         activity.input_tokens += input_tokens
@@ -1119,11 +1162,11 @@ def collect_codex_usage_data(
             daily.breakdowns[(agent_cli, model)].sessions = len(sessions)
 
     for daily in totals.values():
-        _round_accumulated_costs(daily)
+        _materialize_nanodollar_costs(daily)
         for breakdown in daily.breakdowns.values():
-            _round_accumulated_costs(breakdown)
+            _materialize_nanodollar_costs(breakdown)
     for activity in activity_totals.values():
-        _round_accumulated_costs(activity)
+        _materialize_nanodollar_costs(activity)
 
     return totals, activity_totals
 
