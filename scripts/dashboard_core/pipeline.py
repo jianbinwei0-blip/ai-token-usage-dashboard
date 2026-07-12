@@ -112,12 +112,45 @@ def recalc_dashboard(
     pi_all = measure("pi_materialize_all", lambda: materialize_daily(pi_daily_all))
     combined_all = measure("combined_materialize_all", lambda: materialize_daily(combined_daily_all))
 
-    codex_ytd = measure("codex_materialize_ytd", lambda: materialize_daily(codex_daily_all, ytd_from, today))
-    claude_ytd = measure("claude_materialize_ytd", lambda: materialize_daily(claude_daily_all, ytd_from, today))
-    pi_ytd = measure("pi_materialize_ytd", lambda: materialize_daily(pi_daily_all, ytd_from, today))
+    codex_ytd = measure(
+        "codex_materialize_ytd",
+        lambda: materialize_daily(
+            codex_daily_all,
+            ytd_from,
+            today,
+            include_rows=False,
+            include_ranked_values=False,
+        ),
+    )
+    claude_ytd = measure(
+        "claude_materialize_ytd",
+        lambda: materialize_daily(
+            claude_daily_all,
+            ytd_from,
+            today,
+            include_rows=False,
+            include_ranked_values=False,
+        ),
+    )
+    pi_ytd = measure(
+        "pi_materialize_ytd",
+        lambda: materialize_daily(
+            pi_daily_all,
+            ytd_from,
+            today,
+            include_rows=False,
+            include_ranked_values=False,
+        ),
+    )
     combined_ytd = measure(
         "combined_materialize_ytd",
-        lambda: materialize_daily(combined_daily_all, ytd_from, today, include_breakdown_rows=True),
+        lambda: materialize_daily(
+            combined_daily_all,
+            ytd_from,
+            today,
+            include_breakdown_rows=True,
+            include_rows=False,
+        ),
     )
 
     rows = combined_ytd.ranked_values
