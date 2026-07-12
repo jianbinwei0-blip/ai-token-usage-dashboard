@@ -120,6 +120,10 @@ def _mark_persistent_cache_dirty() -> None:
     _PERSISTENT_CACHE_DIRTY = True
 
 
+def persistent_parse_caches_dirty() -> bool:
+    return _PERSISTENT_CACHE_DIRTY
+
+
 def _prune_cache_for_root(cache: dict, root: Path, live_keys: set[str]) -> None:
     root_prefix = os.path.join(str(root), "")
     stale_keys = [key for key in cache if key.startswith(root_prefix) and key not in live_keys]

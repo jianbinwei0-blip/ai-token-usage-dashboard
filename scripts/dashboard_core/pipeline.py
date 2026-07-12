@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import datetime as dt
+import hashlib
+import json
 import time
 from pathlib import Path
 
@@ -18,15 +20,29 @@ from .collectors import (
     collect_codex_usage_data,
     collect_pi_usage_data,
     load_persistent_parse_caches,
+    persistent_parse_caches_dirty,
     save_persistent_parse_caches,
 )
 from .config import DashboardConfig
 from .models import round_cost
 from .pricing import PricingCatalog
-from .render import build_breakdown_table_body, build_stats_sections, build_table_body, rewrite_dashboard_html
+from .render import (
+    build_breakdown_table_body,
+    build_stats_sections,
+    build_table_body,
+    build_usage_dataset_script,
+    rewrite_dashboard_html,
+)
 
 
 _HTML_CACHE: dict[str, tuple[int, str]] = {}
+_DATASET_SCRIPT_CACHE: dict[str, tuple[str, str]] = {}
+_DATASET_SCRIPT_SCHEMA_VERSION = 1
+_MODULE_DIR = Path(__file__).resolve().parent
+_DATASET_SOURCE_SIGNATURE = tuple(
+    (name, (_MODULE_DIR / name).stat().st_size, (_MODULE_DIR / name).stat().st_mtime_ns)
+    for name in ("aggregation.py", "collectors.py", "models.py", "pipeline.py", "pricing.py", "render.py")
+)
 
 
 def read_dashboard_html(path: Path) -> str:
@@ -49,6 +65,88 @@ def write_dashboard_html(path: Path, html: str) -> None:
 
     path.write_text(html, encoding="utf-8")
     _HTML_CACHE[cache_key] = (path.stat().st_mtime_ns, html)
+
+
+def _optional_file_signature(path: Path | None) -> tuple[str, int, int] | None:
+    if path is None:
+        return None
+    try:
+        stat = path.stat()
+    except OSError:
+        return None
+    return str(path.resolve()), stat.st_size, stat.st_mtime_ns
+
+
+def _dataset_script_key(config: DashboardConfig, dataset: dict) -> str | None:
+    parse_cache_signature = _optional_file_signature(config.parse_cache_file)
+    if parse_cache_signature is None:
+        return None
+    key_payload = {
+        "schema": _DATASET_SCRIPT_SCHEMA_VERSION,
+        "source": _DATASET_SOURCE_SIGNATURE,
+        "parse_cache": parse_cache_signature,
+        "pricing_file": _optional_file_signature(config.pricing_file),
+        "timezone": dataset.get("timezone"),
+        "paths": dataset.get("paths"),
+        "providers_available": dataset.get("providers_available"),
+        "pricing": dataset.get("pricing"),
+    }
+    encoded = json.dumps(key_payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    return hashlib.blake2b(encoded, digest_size=16).hexdigest()
+
+
+def _patch_dataset_generated_at(script: str, generated_at: object) -> str | None:
+    start_marker = '{"generated_at":'
+    end_marker = ',"timezone":'
+    start = script.find(start_marker)
+    end = script.find(end_marker, start + len(start_marker))
+    if start < 0 or end < 0:
+        return None
+    generated_json = json.dumps(generated_at, separators=(",", ":"))
+    return script[: start + len(start_marker)] + generated_json + script[end:]
+
+
+def _build_or_reuse_dataset_script(
+    config: DashboardConfig,
+    dataset: dict,
+    *,
+    allow_reuse: bool,
+) -> str:
+    cache_path = (
+        config.parse_cache_file.with_suffix(config.parse_cache_file.suffix + ".dataset")
+        if config.parse_cache_file is not None
+        else None
+    )
+    cache_key = _dataset_script_key(config, dataset)
+    if allow_reuse and cache_path is not None and cache_key is not None:
+        cache_path_key = str(cache_path.resolve())
+        cached = _DATASET_SCRIPT_CACHE.get(cache_path_key)
+        if cached is None:
+            try:
+                stored_key, separator, stored_script = cache_path.read_text(encoding="utf-8").partition("\n")
+            except OSError:
+                pass
+            else:
+                if separator:
+                    cached = (stored_key, stored_script)
+                    _DATASET_SCRIPT_CACHE[cache_path_key] = cached
+        if cached is not None and cached[0] == cache_key:
+            patched = _patch_dataset_generated_at(cached[1], dataset.get("generated_at"))
+            if patched is not None:
+                return patched
+
+    script = build_usage_dataset_script(dataset)
+    if cache_path is not None and cache_key is not None:
+        cache_path_key = str(cache_path.resolve())
+        _DATASET_SCRIPT_CACHE[cache_path_key] = (cache_key, script)
+        try:
+            cache_path.parent.mkdir(parents=True, exist_ok=True)
+            tmp_path = cache_path.with_suffix(cache_path.suffix + ".tmp")
+            tmp_path.write_text(f"{cache_key}\n{script}", encoding="utf-8")
+            tmp_path.replace(cache_path)
+        except OSError:
+            pass
+    return script
 
 
 def recalc_dashboard(
@@ -100,6 +198,7 @@ def recalc_dashboard(
         "provider_collect",
         collect_provider_data,
     )
+    provider_cache_changed = persistent_parse_caches_dirty()
     measure("save_persistent_parse_caches", lambda: save_persistent_parse_caches(config.parse_cache_file))
     combined_daily_all = measure("combine_daily", lambda: combine_daily_totals(codex_daily_all, claude_daily_all, pi_daily_all))
     combined_activity_all = measure(
@@ -256,6 +355,14 @@ def recalc_dashboard(
         },
     }
 
+    dataset_script = measure(
+        "build_usage_dataset_script",
+        lambda: _build_or_reuse_dataset_script(
+            config,
+            dataset_payload,
+            allow_reuse=not provider_cache_changed,
+        ),
+    )
     html = measure("read_dashboard_html", lambda: read_dashboard_html(config.dashboard_html))
     html = measure(
         "rewrite_dashboard_html",
@@ -266,6 +373,7 @@ def recalc_dashboard(
             table_body,
             breakdown_body,
             dataset_payload,
+            dataset_script=dataset_script,
         ),
     )
     measure("write_dashboard_html", lambda: write_dashboard_html(config.dashboard_html, html))

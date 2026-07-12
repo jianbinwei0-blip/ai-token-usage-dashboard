@@ -368,8 +368,11 @@ def rewrite_dashboard_html(
     table_body: str,
     breakdown_body: str,
     dataset: dict,
+    *,
+    dataset_script: str | None = None,
 ) -> str:
-    dataset_script = build_usage_dataset_script(dataset)
+    if dataset_script is None:
+        dataset_script = build_usage_dataset_script(dataset)
     fast_updated = _replace_identified_elements(
         html,
         (
