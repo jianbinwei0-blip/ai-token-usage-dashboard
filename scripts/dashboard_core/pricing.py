@@ -84,6 +84,7 @@ class PricingCatalog:
         self.source = source
         self.version = str(rate_card.get("version") or "unknown")
         self._warnings: set[tuple[str, str]] = set()
+        self._resolved_rates: dict[tuple[str, str], ModelRates | None] = {}
 
     @classmethod
     def from_file(cls, pricing_file: Path | None) -> "PricingCatalog":
@@ -101,8 +102,13 @@ class PricingCatalog:
         return cls(merged, source=f"file:{pricing_file}")
 
     def resolve_rates(self, provider: str, model: str) -> ModelRates | None:
+        cache_key = (provider, model)
+        if cache_key in self._resolved_rates:
+            return self._resolved_rates[cache_key]
+
         provider_models = (self._rate_card.get("providers") or {}).get(provider) or {}
         if not isinstance(provider_models, dict):
+            self._resolved_rates[cache_key] = None
             return None
 
         best_match: tuple[int, dict] | None = None
@@ -115,15 +121,18 @@ class PricingCatalog:
                     best_match = match
 
         if best_match is None:
+            self._resolved_rates[cache_key] = None
             return None
 
         rate_info = best_match[1]
-        return ModelRates(
+        rates = ModelRates(
             input_per_million=float(rate_info.get("input_per_million") or 0.0),
             output_per_million=float(rate_info.get("output_per_million") or 0.0),
             cache_read_per_million=float(rate_info.get("cache_read_per_million") or 0.0),
             cache_write_per_million=float(rate_info.get("cache_write_per_million") or 0.0),
         )
+        self._resolved_rates[cache_key] = rates
+        return rates
 
     def price_usage(
         self,
