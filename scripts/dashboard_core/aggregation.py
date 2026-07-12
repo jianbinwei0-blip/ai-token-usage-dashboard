@@ -100,13 +100,92 @@ def serialize_activity_rows(activity_totals: dict[tuple[dt.date, int], ActivityT
     return rows
 
 
+def _clone_breakdown_totals(values: BreakdownTotals) -> BreakdownTotals:
+    return BreakdownTotals(
+        agent_cli=values.agent_cli,
+        model=values.model,
+        sessions=values.sessions,
+        input_tokens=values.input_tokens,
+        output_tokens=values.output_tokens,
+        cached_tokens=values.cached_tokens,
+        total_tokens=values.total_tokens,
+        input_cost_usd=values.input_cost_usd,
+        output_cost_usd=values.output_cost_usd,
+        cached_cost_usd=values.cached_cost_usd,
+        total_cost_usd=values.total_cost_usd,
+        cost_complete=values.cost_complete,
+    )
+
+
+def _clone_attribution_totals(values: AttributionTotals) -> AttributionTotals:
+    return AttributionTotals(
+        category=values.category,
+        name=values.name,
+        sessions=values.sessions,
+        events=values.events,
+        input_tokens=values.input_tokens,
+        output_tokens=values.output_tokens,
+        cached_tokens=values.cached_tokens,
+        total_tokens=values.total_tokens,
+        input_cost_usd=values.input_cost_usd,
+        output_cost_usd=values.output_cost_usd,
+        cached_cost_usd=values.cached_cost_usd,
+        total_cost_usd=values.total_cost_usd,
+        cost_complete=values.cost_complete,
+    )
+
+
+def _clone_daily_totals(usage_date: dt.date, values: DailyTotals) -> DailyTotals:
+    return DailyTotals(
+        date=usage_date,
+        sessions=values.sessions,
+        input_tokens=values.input_tokens,
+        output_tokens=values.output_tokens,
+        cached_tokens=values.cached_tokens,
+        total_tokens=values.total_tokens,
+        input_cost_usd=values.input_cost_usd,
+        output_cost_usd=values.output_cost_usd,
+        cached_cost_usd=values.cached_cost_usd,
+        total_cost_usd=values.total_cost_usd,
+        cost_complete=values.cost_complete,
+        breakdowns={
+            (bucket.agent_cli, bucket.model): _clone_breakdown_totals(bucket)
+            for bucket in values.breakdowns.values()
+        },
+        attributions={
+            (bucket.category, bucket.name): _clone_attribution_totals(bucket)
+            for bucket in values.attributions.values()
+        },
+    )
+
+
+def _clone_activity_totals(values: ActivityTotals) -> ActivityTotals:
+    return ActivityTotals(
+        date=values.date,
+        hour=values.hour,
+        sessions=values.sessions,
+        input_tokens=values.input_tokens,
+        output_tokens=values.output_tokens,
+        cached_tokens=values.cached_tokens,
+        total_tokens=values.total_tokens,
+        input_cost_usd=values.input_cost_usd,
+        output_cost_usd=values.output_cost_usd,
+        cached_cost_usd=values.cached_cost_usd,
+        total_cost_usd=values.total_cost_usd,
+        cost_complete=values.cost_complete,
+    )
+
+
 def combine_daily_totals(*providers: dict[dt.date, DailyTotals]) -> dict[dt.date, DailyTotals]:
     combined: dict[dt.date, DailyTotals] = {}
 
     for provider in providers:
         for usage_date, values in provider.items():
-            daily = combined.setdefault(usage_date, DailyTotals(date=usage_date))
-            daily.merge_from(values)
+            daily = combined.get(usage_date)
+            if daily is None:
+                combined[usage_date] = _clone_daily_totals(usage_date, values)
+            else:
+                daily.merge_from(values)
 
     return combined
 
@@ -116,8 +195,11 @@ def combine_activity_totals(*providers: dict[tuple[dt.date, int], ActivityTotals
 
     for provider in providers:
         for key, values in provider.items():
-            activity = combined.setdefault(key, ActivityTotals(date=values.date, hour=values.hour))
-            activity.merge_from(values)
+            activity = combined.get(key)
+            if activity is None:
+                combined[key] = _clone_activity_totals(values)
+            else:
+                activity.merge_from(values)
 
     return combined
 
