@@ -62,6 +62,11 @@ def normalized_bucket_value(value: object, fallback: str) -> str:
     return fallback
 
 
+def path_stem(path: object) -> str:
+    name = os.path.basename(os.fspath(path))
+    return name[:-6] if name.endswith(".jsonl") else os.path.splitext(name)[0]
+
+
 def parse_timestamp_local(value: object) -> dt.datetime | None:
     if not isinstance(value, str) or not value:
         return None
@@ -547,8 +552,7 @@ def iter_jsonl_files(root: Path):
     root_key = str(root)
     cached = _JSONL_FILE_INDEX_CACHE.get(root_key)
     if cached is not None and _jsonl_file_index_is_current(cached[0]):
-        for file_path in cached[1]:
-            yield Path(file_path)
+        yield from cached[1]
         return
 
     directories, files, stable = _scan_jsonl_file_index(root)
@@ -561,8 +565,7 @@ def iter_jsonl_files(root: Path):
         del _JSONL_FILE_INDEX_CACHE[root_key]
         _mark_persistent_cache_dirty()
 
-    for file_path in files:
-        yield Path(file_path)
+    yield from files
 
 
 def pricing_cache_key(pricing_catalog: PricingCatalog) -> str:
@@ -708,24 +711,25 @@ def build_codex_session_contribution(
 
 
 def parse_codex_session_usage_cached(
-    session_path: Path,
+    session_path,
     sessions_root: Path,
     pricing_catalog: PricingCatalog,
 ) -> dict[str, object] | None:
     try:
-        stat = session_path.stat()
+        stat = os.stat(session_path)
     except OSError:
         return None
 
-    cache_key = str(session_path)
+    cache_key = os.fspath(session_path)
     cached = _CODEX_SESSION_USAGE_CACHE.get(cache_key)
     signature = (stat.st_size, stat.st_mtime_ns)
     current_pricing_key = pricing_cache_key(pricing_catalog)
     if cached is not None and cached[:2] == signature and cached[2] == current_pricing_key:
         return cached[3]
 
-    usage = parse_codex_session_usage(session_path)
-    contribution = None if usage is None else build_codex_session_contribution(session_path, sessions_root, usage, pricing_catalog)
+    path = session_path if isinstance(session_path, Path) else Path(session_path)
+    usage = parse_codex_session_usage(path)
+    contribution = None if usage is None else build_codex_session_contribution(path, sessions_root, usage, pricing_catalog)
     _CODEX_SESSION_USAGE_CACHE[cache_key] = (signature[0], signature[1], current_pricing_key, contribution)
     _mark_persistent_cache_dirty()
     return contribution
@@ -745,7 +749,7 @@ def collect_codex_usage_data(
     live_cache_keys: set[str] = set()
 
     for file_path in iter_jsonl_files(sessions_root):
-        live_cache_keys.add(str(file_path))
+        live_cache_keys.add(os.fspath(file_path))
         contribution = parse_codex_session_usage_cached(file_path, sessions_root, catalog)
         if contribution is None:
             continue
@@ -762,7 +766,7 @@ def collect_codex_usage_data(
         if not isinstance(activity_timestamp, dt.datetime):
             activity_timestamp = dt.datetime.combine(usage_date, dt.time(hour=0), tzinfo=LOCAL_TIMEZONE)
 
-        session_id = normalized_bucket_value(contribution.get("session_id"), file_path.stem)
+        session_id = normalized_bucket_value(contribution.get("session_id"), path_stem(file_path))
         agent_cli = normalized_bucket_value(contribution.get("agent_cli"), "codex")
         model = normalized_bucket_value(contribution.get("model"), DEFAULT_MODEL)
         input_tokens = safe_non_negative_int(contribution.get("input_tokens"))
@@ -900,19 +904,20 @@ def parse_claude_request_records(file_path: Path) -> list[dict[str, object]]:
     return list(request_usage.values())
 
 
-def parse_claude_request_records_cached(file_path: Path) -> list[dict[str, object]]:
+def parse_claude_request_records_cached(file_path) -> list[dict[str, object]]:
     try:
-        stat = file_path.stat()
+        stat = os.stat(file_path)
     except OSError:
         return []
 
-    cache_key = str(file_path)
+    cache_key = os.fspath(file_path)
     cached = _CLAUDE_REQUEST_RECORDS_CACHE.get(cache_key)
     signature = (stat.st_size, stat.st_mtime_ns)
     if cached is not None and cached[:2] == signature:
         return cached[2]
 
-    records = parse_claude_request_records(file_path)
+    path = file_path if isinstance(file_path, Path) else Path(file_path)
+    records = parse_claude_request_records(path)
     _CLAUDE_REQUEST_RECORDS_CACHE[cache_key] = (signature[0], signature[1], records)
     _mark_persistent_cache_dirty()
     return records
@@ -1177,19 +1182,20 @@ def parse_claude_attribution_events(file_path: Path) -> list[dict[str, object]]:
     return events
 
 
-def parse_claude_attribution_events_cached(file_path: Path) -> list[dict[str, object]]:
+def parse_claude_attribution_events_cached(file_path) -> list[dict[str, object]]:
     try:
-        stat = file_path.stat()
+        stat = os.stat(file_path)
     except OSError:
         return []
 
-    cache_key = str(file_path)
+    cache_key = os.fspath(file_path)
     cached = _CLAUDE_ATTRIBUTION_EVENTS_CACHE.get(cache_key)
     signature = (stat.st_size, stat.st_mtime_ns)
     if cached is not None and cached[:2] == signature:
         return cached[2]
 
-    events = parse_claude_attribution_events(file_path)
+    path = file_path if isinstance(file_path, Path) else Path(file_path)
+    events = parse_claude_attribution_events(path)
     _CLAUDE_ATTRIBUTION_EVENTS_CACHE[cache_key] = (signature[0], signature[1], events)
     _mark_persistent_cache_dirty()
     return events
@@ -1261,16 +1267,17 @@ def collect_claude_usage_data(
     live_cache_keys: set[str] = set()
 
     for file_path in iter_jsonl_files(claude_projects_root):
-        live_cache_keys.add(str(file_path))
+        live_cache_keys.add(os.fspath(file_path))
+        file_stem = path_stem(file_path)
         for attribution_event in parse_claude_attribution_events_cached(file_path):
             timestamp = attribution_event.get("timestamp")
             if not isinstance(timestamp, dt.datetime):
                 continue
-            session_id = normalized_bucket_value(attribution_event.get("session_id"), file_path.stem)
+            session_id = normalized_bucket_value(attribution_event.get("session_id"), file_stem)
             attribution_events_by_session_date[(timestamp.date(), session_id)].append(attribution_event)
 
         for record in parse_claude_request_records_cached(file_path):
-            session_id = normalized_bucket_value(record.get("session_id"), file_path.stem)
+            session_id = normalized_bucket_value(record.get("session_id"), file_stem)
             request_id = normalized_bucket_value(record.get("request_id"), "")
             if not request_id:
                 continue
@@ -1639,23 +1646,25 @@ def can_resume_pi_contribution(file_path: Path, current_size: int, cached_size: 
     )
 
 
-def parse_pi_session_contribution_cached(file_path: Path) -> dict[str, object]:
+def parse_pi_session_contribution_cached(file_path) -> dict[str, object]:
+    stem = path_stem(file_path)
     try:
-        stat = file_path.stat()
+        stat = os.stat(file_path)
     except OSError:
-        return empty_pi_contribution(file_path.stem)
+        return empty_pi_contribution(stem)
 
-    cache_key = str(file_path)
+    cache_key = os.fspath(file_path)
     cached = _PI_SESSION_RECORDS_CACHE.get(cache_key)
     signature = (stat.st_size, stat.st_mtime_ns)
     if cached is not None and cached[:2] == signature:
         contribution = cached[2]
-        return contribution if isinstance(contribution, dict) else empty_pi_contribution(file_path.stem)
+        return contribution if isinstance(contribution, dict) else empty_pi_contribution(stem)
 
-    if cached is not None and isinstance(cached[2], dict) and can_resume_pi_contribution(file_path, stat.st_size, cached[0], cached[2]):
-        contribution = parse_pi_session_contribution(file_path, cached[2], start_offset=safe_non_negative_int(cached[2].get("offset")))
+    path = file_path if isinstance(file_path, Path) else Path(file_path)
+    if cached is not None and isinstance(cached[2], dict) and can_resume_pi_contribution(path, stat.st_size, cached[0], cached[2]):
+        contribution = parse_pi_session_contribution(path, cached[2], start_offset=safe_non_negative_int(cached[2].get("offset")))
     else:
-        contribution = parse_pi_session_contribution(file_path)
+        contribution = parse_pi_session_contribution(path)
 
     _PI_SESSION_RECORDS_CACHE[cache_key] = (signature[0], signature[1], contribution)
     _mark_persistent_cache_dirty()
@@ -1681,9 +1690,9 @@ def collect_pi_usage_data(
     live_cache_keys: set[str] = set()
 
     for file_path in iter_jsonl_files(sessions_root):
-        live_cache_keys.add(str(file_path))
+        live_cache_keys.add(os.fspath(file_path))
         contribution = parse_pi_session_contribution_cached(file_path)
-        session_id = normalized_bucket_value(contribution.get("session_id"), file_path.stem)
+        session_id = normalized_bucket_value(contribution.get("session_id"), path_stem(file_path))
         usage_rows = contribution.get("usage_rows")
         activity_rows = contribution.get("activity_rows")
         if not isinstance(usage_rows, list):
