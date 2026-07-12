@@ -40,10 +40,11 @@ CLAUDE_BUILTIN_COMMANDS = frozenset(
     }
 )
 CodexContribution = tuple[object, ...]
+ClaudeRequestRecord = tuple[str, str, dt.datetime, int, int, int, int, int, str]
 
 
 _CODEX_SESSION_USAGE_CACHE: dict[str, tuple[int, int, str, CodexContribution | None]] = {}
-_CLAUDE_REQUEST_RECORDS_CACHE: dict[str, tuple[int, int, list[dict[str, object]]]] = {}
+_CLAUDE_REQUEST_RECORDS_CACHE: dict[str, tuple[int, int, list[ClaudeRequestRecord]]] = {}
 _CLAUDE_ATTRIBUTION_EVENTS_CACHE: dict[str, tuple[int, int, list[dict[str, object]]]] = {}
 _PI_SESSION_RECORDS_CACHE: dict[str, tuple[int, int, dict[str, object]]] = {}
 _JSONL_FILE_INDEX_CACHE: dict[str, tuple[dict[str, int], tuple[str, ...]]] = {}
@@ -132,6 +133,66 @@ def _deserialize_record(record: object) -> dict[str, object] | None:
         return None
     record["timestamp"] = deserialize_timestamp(record.get("timestamp"))
     return record
+
+
+def _serialize_claude_request_record(record: ClaudeRequestRecord) -> list[object]:
+    (
+        session_id,
+        request_id,
+        timestamp,
+        input_tokens,
+        cache_creation_input_tokens,
+        cache_read_input_tokens,
+        cached_tokens,
+        output_tokens,
+        model,
+    ) = record
+    return [
+        session_id,
+        request_id,
+        serialize_timestamp(timestamp),
+        input_tokens,
+        cache_creation_input_tokens,
+        cache_read_input_tokens,
+        cached_tokens,
+        output_tokens,
+        model,
+    ]
+
+
+def _deserialize_claude_request_record(record: object) -> ClaudeRequestRecord | None:
+    if isinstance(record, dict):
+        values = (
+            record.get("session_id"),
+            record.get("request_id"),
+            record.get("timestamp"),
+            record.get("input_tokens"),
+            record.get("cache_creation_input_tokens"),
+            record.get("cache_read_input_tokens"),
+            record.get("cached_tokens"),
+            record.get("output_tokens"),
+            record.get("model"),
+        )
+    elif isinstance(record, list) and len(record) == 9:
+        values = tuple(record)
+    else:
+        return None
+
+    request_id = normalized_bucket_value(values[1], "")
+    timestamp = values[2] if isinstance(values[2], dt.datetime) else deserialize_timestamp(values[2])
+    if not request_id or timestamp is None:
+        return None
+    return (
+        normalized_bucket_value(values[0], ""),
+        request_id,
+        timestamp,
+        safe_non_negative_int(values[3]),
+        safe_non_negative_int(values[4]),
+        safe_non_negative_int(values[5]),
+        safe_non_negative_int(values[6]),
+        safe_non_negative_int(values[7]),
+        normalized_bucket_value(values[8], DEFAULT_MODEL),
+    )
 
 
 def _serialize_codex_contribution(contribution: CodexContribution | None) -> list[object] | None:
@@ -383,15 +444,29 @@ def load_persistent_parse_caches(cache_path: Path | None) -> None:
     claude_payload = payload.get("claude")
     if isinstance(claude_payload, dict):
         for file_path, entry in claude_payload.items():
-            if not isinstance(entry, dict):
+            legacy_entry = isinstance(entry, dict)
+            if legacy_entry:
+                size_value = entry.get("size")
+                mtime_ns_value = entry.get("mtime_ns")
+                records_payload = entry.get("records")
+            elif isinstance(entry, list) and len(entry) == 3:
+                size_value, mtime_ns_value, records_payload = entry
+            else:
                 continue
-            size = safe_non_negative_int(entry.get("size"))
-            mtime_ns = safe_non_negative_int(entry.get("mtime_ns"))
-            records_payload = entry.get("records")
             if not isinstance(records_payload, list):
                 continue
-            records = [record for item in records_payload if (record := _deserialize_record(item)) is not None]
-            _CLAUDE_REQUEST_RECORDS_CACHE[file_path] = (size, mtime_ns, records)
+            records = [
+                record
+                for item in records_payload
+                if (record := _deserialize_claude_request_record(item)) is not None
+            ]
+            _CLAUDE_REQUEST_RECORDS_CACHE[file_path] = (
+                safe_non_negative_int(size_value),
+                safe_non_negative_int(mtime_ns_value),
+                records,
+            )
+            if legacy_entry or any(isinstance(item, dict) for item in records_payload):
+                _PERSISTENT_CACHE_DIRTY = True
 
     claude_attribution_payload = payload.get("claude_attribution")
     if isinstance(claude_attribution_payload, dict):
@@ -444,11 +519,11 @@ def save_persistent_parse_caches(cache_path: Path | None) -> None:
             for file_path, (size, mtime_ns, pricing_key, contribution) in _CODEX_SESSION_USAGE_CACHE.items()
         },
         "claude": {
-            file_path: {
-                "size": size,
-                "mtime_ns": mtime_ns,
-                "records": [_serialize_record(record) for record in records],
-            }
+            file_path: [
+                size,
+                mtime_ns,
+                [_serialize_claude_request_record(record) for record in records],
+            ]
             for file_path, (size, mtime_ns, records) in _CLAUDE_REQUEST_RECORDS_CACHE.items()
         },
         "claude_attribution": {
@@ -938,7 +1013,7 @@ def collect_codex_daily_totals(
     return totals
 
 
-def parse_claude_request_records(file_path: Path) -> list[dict[str, object]]:
+def parse_claude_request_records(file_path: Path) -> list[ClaudeRequestRecord]:
     session_scope = file_path.stem
     request_usage: dict[tuple[str, str], dict[str, object]] = {}
 
@@ -1010,10 +1085,14 @@ def parse_claude_request_records(file_path: Path) -> list[dict[str, object]]:
             if model != DEFAULT_MODEL:
                 current["model"] = model
 
-    return list(request_usage.values())
+    return [
+        record
+        for value in request_usage.values()
+        if (record := _deserialize_claude_request_record(value)) is not None
+    ]
 
 
-def parse_claude_request_records_cached(file_path) -> list[dict[str, object]]:
+def parse_claude_request_records_cached(file_path) -> list[ClaudeRequestRecord]:
     try:
         stat = os.stat(file_path)
     except OSError:
@@ -1371,7 +1450,7 @@ def collect_claude_usage_data(
         return totals, activity_totals
 
     catalog = pricing_catalog or PricingCatalog.from_file(None)
-    request_usage: dict[tuple[str, str], dict[str, object]] = {}
+    request_usage: dict[tuple[str, str], ClaudeRequestRecord] = {}
     attribution_events_by_session_date: dict[tuple[dt.date, str], list[dict[str, object]]] = defaultdict(list)
     live_cache_keys: set[str] = set()
 
@@ -1386,51 +1465,47 @@ def collect_claude_usage_data(
             attribution_events_by_session_date[(timestamp.date(), session_id)].append(attribution_event)
 
         for record in parse_claude_request_records_cached(file_path):
-            session_id = normalized_bucket_value(record.get("session_id"), file_stem)
-            request_id = normalized_bucket_value(record.get("request_id"), "")
-            if not request_id:
-                continue
+            (
+                session_id,
+                request_id,
+                local_timestamp,
+                input_tokens,
+                cache_creation_input_tokens,
+                cache_read_input_tokens,
+                cached_tokens,
+                output_tokens,
+                model,
+            ) = record
+            if not session_id:
+                session_id = file_stem
 
             dedupe_key = (session_id, request_id)
             current = request_usage.get(dedupe_key)
-            local_timestamp = record.get("timestamp")
-            if not isinstance(local_timestamp, dt.datetime):
-                continue
-
-            input_tokens = safe_non_negative_int(record.get("input_tokens"))
-            cache_creation_input_tokens = safe_non_negative_int(record.get("cache_creation_input_tokens"))
-            cache_read_input_tokens = safe_non_negative_int(record.get("cache_read_input_tokens"))
-            cached_tokens = safe_non_negative_int(record.get("cached_tokens"))
-            output_tokens = safe_non_negative_int(record.get("output_tokens"))
-            model = normalized_bucket_value(record.get("model"), DEFAULT_MODEL)
-
             if current is None:
-                request_usage[dedupe_key] = {
-                    "session_id": session_id,
-                    "timestamp": local_timestamp,
-                    "input_tokens": input_tokens,
-                    "cache_creation_input_tokens": cache_creation_input_tokens,
-                    "cache_read_input_tokens": cache_read_input_tokens,
-                    "cached_tokens": cached_tokens,
-                    "output_tokens": output_tokens,
-                    "model": model,
-                }
+                request_usage[dedupe_key] = (
+                    session_id,
+                    request_id,
+                    local_timestamp,
+                    input_tokens,
+                    cache_creation_input_tokens,
+                    cache_read_input_tokens,
+                    cached_tokens,
+                    output_tokens,
+                    model,
+                )
                 continue
 
-            current["timestamp"] = max(current["timestamp"], local_timestamp)
-            current["input_tokens"] = max(safe_non_negative_int(current.get("input_tokens")), input_tokens)
-            current["cache_creation_input_tokens"] = max(
-                safe_non_negative_int(current.get("cache_creation_input_tokens")),
-                cache_creation_input_tokens,
+            request_usage[dedupe_key] = (
+                session_id,
+                request_id,
+                max(current[2], local_timestamp),
+                max(current[3], input_tokens),
+                max(current[4], cache_creation_input_tokens),
+                max(current[5], cache_read_input_tokens),
+                max(current[6], cached_tokens),
+                max(current[7], output_tokens),
+                model if model != DEFAULT_MODEL else current[8],
             )
-            current["cache_read_input_tokens"] = max(
-                safe_non_negative_int(current.get("cache_read_input_tokens")),
-                cache_read_input_tokens,
-            )
-            current["cached_tokens"] = max(safe_non_negative_int(current.get("cached_tokens")), cached_tokens)
-            current["output_tokens"] = max(safe_non_negative_int(current.get("output_tokens")), output_tokens)
-            if model != DEFAULT_MODEL:
-                current["model"] = model
 
     _prune_cache_for_root(_CLAUDE_REQUEST_RECORDS_CACHE, claude_projects_root, live_cache_keys)
     _prune_cache_for_root(_CLAUDE_ATTRIBUTION_EVENTS_CACHE, claude_projects_root, live_cache_keys)
@@ -1440,20 +1515,21 @@ def collect_claude_usage_data(
     daily_session_usage: dict[tuple[dt.date, str], dict[str, object]] = {}
 
     for request in request_usage.values():
-        timestamp = request["timestamp"]
-        if not isinstance(timestamp, dt.datetime):
-            continue
-
+        (
+            session_id,
+            _request_id,
+            timestamp,
+            input_tokens,
+            cache_creation_input_tokens,
+            cache_read_input_tokens,
+            cached_tokens,
+            output_tokens,
+            model,
+        ) = request
         usage_date = timestamp.date()
         daily = totals.setdefault(usage_date, DailyTotals(date=usage_date))
-        input_tokens = safe_non_negative_int(request.get("input_tokens"))
-        cache_creation_input_tokens = safe_non_negative_int(request.get("cache_creation_input_tokens"))
-        cache_read_input_tokens = safe_non_negative_int(request.get("cache_read_input_tokens"))
-        cached_tokens = safe_non_negative_int(request.get("cached_tokens"))
-        output_tokens = safe_non_negative_int(request.get("output_tokens"))
         request_total = input_tokens + cached_tokens + output_tokens
         agent_cli = "claude-code"
-        model = normalized_bucket_value(request.get("model"), DEFAULT_MODEL)
         priced = catalog.price_usage(
             "claude",
             model,
@@ -1488,7 +1564,6 @@ def collect_claude_usage_data(
         breakdown.total_cost_usd += priced.total_cost_usd
         breakdown.cost_complete = breakdown.cost_complete and priced.cost_complete
 
-        session_id = normalized_bucket_value(request.get("session_id"), "unknown-session")
         daily_sessions.setdefault(usage_date, set()).add(session_id)
         bucket_sessions.setdefault((usage_date, agent_cli, model), set()).add(session_id)
 
