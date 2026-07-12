@@ -39,7 +39,10 @@ CLAUDE_BUILTIN_COMMANDS = frozenset(
         "effort",
     }
 )
-_CODEX_SESSION_USAGE_CACHE: dict[str, tuple[int, int, str, dict[str, object] | None]] = {}
+CodexContribution = tuple[object, ...]
+
+
+_CODEX_SESSION_USAGE_CACHE: dict[str, tuple[int, int, str, CodexContribution | None]] = {}
 _CLAUDE_REQUEST_RECORDS_CACHE: dict[str, tuple[int, int, list[dict[str, object]]]] = {}
 _CLAUDE_ATTRIBUTION_EVENTS_CACHE: dict[str, tuple[int, int, list[dict[str, object]]]] = {}
 _PI_SESSION_RECORDS_CACHE: dict[str, tuple[int, int, dict[str, object]]] = {}
@@ -131,21 +134,87 @@ def _deserialize_record(record: object) -> dict[str, object] | None:
     return record
 
 
-def _serialize_codex_contribution(contribution: dict[str, object] | None) -> dict[str, object] | None:
+def _serialize_codex_contribution(contribution: CodexContribution | None) -> list[object] | None:
     if contribution is None:
         return None
-    serialized = dict(contribution)
-    serialized["timestamp"] = serialize_timestamp(contribution.get("timestamp"))
-    return serialized
+    (
+        usage_date,
+        timestamp,
+        session_id,
+        agent_cli,
+        model,
+        input_tokens,
+        output_tokens,
+        cached_tokens,
+        total_tokens,
+        input_cost_usd,
+        output_cost_usd,
+        cached_cost_usd,
+        total_cost_usd,
+        cost_complete,
+    ) = contribution
+    return [
+        usage_date,
+        serialize_timestamp(timestamp),
+        session_id,
+        agent_cli,
+        model,
+        input_tokens,
+        output_tokens,
+        cached_tokens,
+        total_tokens,
+        input_cost_usd,
+        output_cost_usd,
+        cached_cost_usd,
+        total_cost_usd,
+        cost_complete,
+    ]
 
 
-def _deserialize_codex_contribution(contribution: object) -> dict[str, object] | None:
+def _deserialize_codex_contribution(contribution: object) -> CodexContribution | None:
     if contribution is None:
         return None
-    if not isinstance(contribution, dict):
+    if isinstance(contribution, dict):
+        values = (
+            contribution.get("usage_date"),
+            contribution.get("timestamp"),
+            contribution.get("session_id"),
+            contribution.get("agent_cli"),
+            contribution.get("model"),
+            contribution.get("input_tokens"),
+            contribution.get("output_tokens"),
+            contribution.get("cached_tokens"),
+            contribution.get("total_tokens"),
+            contribution.get("input_cost_usd"),
+            contribution.get("output_cost_usd"),
+            contribution.get("cached_cost_usd"),
+            contribution.get("total_cost_usd"),
+            contribution.get("cost_complete", True),
+        )
+    elif isinstance(contribution, list) and len(contribution) == 14:
+        values = tuple(contribution)
+    else:
         return None
-    contribution["timestamp"] = deserialize_timestamp(contribution.get("timestamp"))
-    return contribution
+
+    usage_date = values[0]
+    if not isinstance(usage_date, str):
+        return None
+    return (
+        usage_date,
+        deserialize_timestamp(values[1]),
+        normalized_bucket_value(values[2], ""),
+        normalized_bucket_value(values[3], "codex"),
+        normalized_bucket_value(values[4], DEFAULT_MODEL),
+        safe_non_negative_int(values[5]),
+        safe_non_negative_int(values[6]),
+        safe_non_negative_int(values[7]),
+        safe_non_negative_int(values[8]),
+        float(values[9] or 0.0),
+        float(values[10] or 0.0),
+        float(values[11] or 0.0),
+        float(values[12] or 0.0),
+        bool(values[13]),
+    )
 
 
 def merge_native_cost(target: dict[str, float] | None, native_cost: object) -> dict[str, float] | None:
@@ -291,15 +360,25 @@ def load_persistent_parse_caches(cache_path: Path | None) -> None:
     codex_payload = payload.get("codex")
     if isinstance(codex_payload, dict):
         for file_path, entry in codex_payload.items():
-            if not isinstance(entry, dict):
+            legacy_entry = isinstance(entry, dict)
+            if legacy_entry:
+                size_value = entry.get("size")
+                mtime_ns_value = entry.get("mtime_ns")
+                pricing_key_value = entry.get("pricing_key")
+                contribution_value = entry.get("contribution")
+            elif isinstance(entry, list) and len(entry) == 4:
+                size_value, mtime_ns_value, pricing_key_value, contribution_value = entry
+            else:
                 continue
-            size = safe_non_negative_int(entry.get("size"))
-            mtime_ns = safe_non_negative_int(entry.get("mtime_ns"))
-            pricing_key = normalized_bucket_value(entry.get("pricing_key"), "")
-            contribution = _deserialize_codex_contribution(entry.get("contribution"))
+            size = safe_non_negative_int(size_value)
+            mtime_ns = safe_non_negative_int(mtime_ns_value)
+            pricing_key = normalized_bucket_value(pricing_key_value, "")
+            contribution = _deserialize_codex_contribution(contribution_value)
             if not pricing_key:
                 continue
             _CODEX_SESSION_USAGE_CACHE[file_path] = (size, mtime_ns, pricing_key, contribution)
+            if legacy_entry or isinstance(contribution_value, dict):
+                _PERSISTENT_CACHE_DIRTY = True
 
     claude_payload = payload.get("claude")
     if isinstance(claude_payload, dict):
@@ -356,12 +435,12 @@ def save_persistent_parse_caches(cache_path: Path | None) -> None:
             for root_path, (directories, files) in _JSONL_FILE_INDEX_CACHE.items()
         },
         "codex": {
-            file_path: {
-                "size": size,
-                "mtime_ns": mtime_ns,
-                "pricing_key": pricing_key,
-                "contribution": _serialize_codex_contribution(contribution),
-            }
+            file_path: [
+                size,
+                mtime_ns,
+                pricing_key,
+                _serialize_codex_contribution(contribution),
+            ]
             for file_path, (size, mtime_ns, pricing_key, contribution) in _CODEX_SESSION_USAGE_CACHE.items()
         },
         "claude": {
@@ -667,7 +746,7 @@ def build_codex_session_contribution(
     sessions_root: Path,
     usage: dict[str, int | str | dt.datetime],
     pricing_catalog: PricingCatalog,
-) -> dict[str, object] | None:
+) -> CodexContribution | None:
     fallback_usage_date = codex_usage_date_from_path(session_path, sessions_root)
     if fallback_usage_date is None:
         return None
@@ -692,29 +771,29 @@ def build_codex_session_contribution(
         cache_read_tokens=cached_tokens,
     )
 
-    return {
-        "usage_date": usage_date.isoformat(),
-        "timestamp": activity_timestamp,
-        "session_id": session_id,
-        "agent_cli": agent_cli,
-        "model": model,
-        "input_tokens": input_tokens,
-        "output_tokens": output_tokens,
-        "cached_tokens": cached_tokens,
-        "total_tokens": total_tokens,
-        "input_cost_usd": priced.input_cost_usd,
-        "output_cost_usd": priced.output_cost_usd,
-        "cached_cost_usd": priced.cached_cost_usd,
-        "total_cost_usd": priced.total_cost_usd,
-        "cost_complete": priced.cost_complete,
-    }
+    return (
+        usage_date.isoformat(),
+        activity_timestamp,
+        session_id,
+        agent_cli,
+        model,
+        input_tokens,
+        output_tokens,
+        cached_tokens,
+        total_tokens,
+        priced.input_cost_usd,
+        priced.output_cost_usd,
+        priced.cached_cost_usd,
+        priced.total_cost_usd,
+        priced.cost_complete,
+    )
 
 
 def parse_codex_session_usage_cached(
     session_path,
     sessions_root: Path,
     pricing_catalog: PricingCatalog,
-) -> dict[str, object] | None:
+) -> CodexContribution | None:
     try:
         stat = os.stat(session_path)
     except OSError:
@@ -754,30 +833,31 @@ def collect_codex_usage_data(
         if contribution is None:
             continue
 
-        usage_date_value = contribution.get("usage_date")
-        if not isinstance(usage_date_value, str):
-            continue
+        (
+            usage_date_value,
+            activity_timestamp,
+            session_id,
+            agent_cli,
+            model,
+            input_tokens,
+            output_tokens,
+            cached_tokens,
+            total_tokens,
+            input_cost_usd,
+            output_cost_usd,
+            cached_cost_usd,
+            total_cost_usd,
+            cost_complete,
+        ) = contribution
         try:
             usage_date = dt.date.fromisoformat(usage_date_value)
         except ValueError:
             continue
 
-        activity_timestamp = contribution.get("timestamp")
         if not isinstance(activity_timestamp, dt.datetime):
             activity_timestamp = dt.datetime.combine(usage_date, dt.time(hour=0), tzinfo=LOCAL_TIMEZONE)
-
-        session_id = normalized_bucket_value(contribution.get("session_id"), path_stem(file_path))
-        agent_cli = normalized_bucket_value(contribution.get("agent_cli"), "codex")
-        model = normalized_bucket_value(contribution.get("model"), DEFAULT_MODEL)
-        input_tokens = safe_non_negative_int(contribution.get("input_tokens"))
-        output_tokens = safe_non_negative_int(contribution.get("output_tokens"))
-        cached_tokens = safe_non_negative_int(contribution.get("cached_tokens"))
-        total_tokens = safe_non_negative_int(contribution.get("total_tokens"))
-        input_cost_usd = float(contribution.get("input_cost_usd") or 0.0)
-        output_cost_usd = float(contribution.get("output_cost_usd") or 0.0)
-        cached_cost_usd = float(contribution.get("cached_cost_usd") or 0.0)
-        total_cost_usd = float(contribution.get("total_cost_usd") or 0.0)
-        cost_complete = bool(contribution.get("cost_complete", True))
+        if not session_id:
+            session_id = path_stem(file_path)
 
         daily = totals.setdefault(usage_date, DailyTotals(date=usage_date))
         daily.sessions += 1
