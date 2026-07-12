@@ -1542,42 +1542,66 @@ def collect_claude_usage_data(
     daily_sessions: dict[dt.date, set[str]] = {}
     bucket_sessions: dict[tuple[dt.date, str, str], set[str]] = {}
     daily_session_usage: dict[tuple[dt.date, str], dict[str, object]] = {}
-
+    request_groups: dict[tuple[dt.date, str, str], list[ClaudeRequestRecord]] = defaultdict(list)
     for request in request_usage.values():
-        (
-            session_id,
-            _request_id,
-            timestamp,
-            input_tokens,
-            cache_creation_input_tokens,
-            cache_read_input_tokens,
-            cached_tokens,
-            output_tokens,
-            model,
-        ) = request
-        usage_date = timestamp.date()
-        daily = totals.setdefault(usage_date, DailyTotals(date=usage_date))
-        request_total = input_tokens + cached_tokens + output_tokens
-        agent_cli = "claude-code"
-        priced = catalog.price_usage(
-            "claude",
-            model,
-            uncached_input_tokens=input_tokens,
-            output_tokens=output_tokens,
-            cache_read_tokens=cache_read_input_tokens,
-            cache_write_tokens=cache_creation_input_tokens,
-        )
+        request_groups[(request[2].date(), request[0], request[8])].append(request)
 
+    for (usage_date, session_id, model), requests in request_groups.items():
+        timestamp = min(request[2] for request in requests)
+        input_tokens = sum(request[3] for request in requests)
+        cache_creation_input_tokens = sum(request[4] for request in requests)
+        cache_read_input_tokens = sum(request[5] for request in requests)
+        cached_tokens = sum(request[6] for request in requests)
+        output_tokens = sum(request[7] for request in requests)
+        request_total = input_tokens + cached_tokens + output_tokens
+
+        if catalog.supports_exact_usage_aggregation("claude", model):
+            priced = catalog.price_usage(
+                "claude",
+                model,
+                uncached_input_tokens=input_tokens,
+                output_tokens=output_tokens,
+                cache_read_tokens=cache_read_input_tokens,
+                cache_write_tokens=cache_creation_input_tokens,
+            )
+            input_cost_usd = priced.input_cost_usd
+            output_cost_usd = priced.output_cost_usd
+            cached_cost_usd = priced.cached_cost_usd
+            total_cost_usd = priced.total_cost_usd
+            cost_complete = priced.cost_complete
+        else:
+            input_cost_usd = 0.0
+            output_cost_usd = 0.0
+            cached_cost_usd = 0.0
+            total_cost_usd = 0.0
+            cost_complete = True
+            for request in requests:
+                priced = catalog.price_usage(
+                    "claude",
+                    model,
+                    uncached_input_tokens=request[3],
+                    output_tokens=request[7],
+                    cache_read_tokens=request[5],
+                    cache_write_tokens=request[4],
+                )
+                input_cost_usd += priced.input_cost_usd
+                output_cost_usd += priced.output_cost_usd
+                cached_cost_usd += priced.cached_cost_usd
+                total_cost_usd += priced.total_cost_usd
+                cost_complete = cost_complete and priced.cost_complete
+
+        daily = totals.setdefault(usage_date, DailyTotals(date=usage_date))
         daily.input_tokens += input_tokens
         daily.output_tokens += output_tokens
         daily.cached_tokens += cached_tokens
         daily.total_tokens += request_total
-        daily.input_cost_usd += priced.input_cost_usd
-        daily.output_cost_usd += priced.output_cost_usd
-        daily.cached_cost_usd += priced.cached_cost_usd
-        daily.total_cost_usd += priced.total_cost_usd
-        daily.cost_complete = daily.cost_complete and priced.cost_complete
+        daily.input_cost_usd += input_cost_usd
+        daily.output_cost_usd += output_cost_usd
+        daily.cached_cost_usd += cached_cost_usd
+        daily.total_cost_usd += total_cost_usd
+        daily.cost_complete = daily.cost_complete and cost_complete
 
+        agent_cli = "claude-code"
         breakdown_key = (agent_cli, model)
         breakdown = daily.breakdowns.get(breakdown_key)
         if breakdown is None:
@@ -1587,11 +1611,11 @@ def collect_claude_usage_data(
         breakdown.output_tokens += output_tokens
         breakdown.cached_tokens += cached_tokens
         breakdown.total_tokens += request_total
-        breakdown.input_cost_usd += priced.input_cost_usd
-        breakdown.output_cost_usd += priced.output_cost_usd
-        breakdown.cached_cost_usd += priced.cached_cost_usd
-        breakdown.total_cost_usd += priced.total_cost_usd
-        breakdown.cost_complete = breakdown.cost_complete and priced.cost_complete
+        breakdown.input_cost_usd += input_cost_usd
+        breakdown.output_cost_usd += output_cost_usd
+        breakdown.cached_cost_usd += cached_cost_usd
+        breakdown.total_cost_usd += total_cost_usd
+        breakdown.cost_complete = breakdown.cost_complete and cost_complete
 
         daily_sessions.setdefault(usage_date, set()).add(session_id)
         bucket_sessions.setdefault((usage_date, agent_cli, model), set()).add(session_id)
@@ -1605,11 +1629,11 @@ def collect_claude_usage_data(
                 "output_tokens": output_tokens,
                 "cached_tokens": cached_tokens,
                 "total_tokens": request_total,
-                "input_cost_usd": priced.input_cost_usd,
-                "output_cost_usd": priced.output_cost_usd,
-                "cached_cost_usd": priced.cached_cost_usd,
-                "total_cost_usd": priced.total_cost_usd,
-                "cost_complete": priced.cost_complete,
+                "input_cost_usd": input_cost_usd,
+                "output_cost_usd": output_cost_usd,
+                "cached_cost_usd": cached_cost_usd,
+                "total_cost_usd": total_cost_usd,
+                "cost_complete": cost_complete,
             }
         else:
             session_activity["timestamp"] = min(session_activity["timestamp"], timestamp)
@@ -1617,11 +1641,11 @@ def collect_claude_usage_data(
             session_activity["output_tokens"] = safe_non_negative_int(session_activity.get("output_tokens")) + output_tokens
             session_activity["cached_tokens"] = safe_non_negative_int(session_activity.get("cached_tokens")) + cached_tokens
             session_activity["total_tokens"] = safe_non_negative_int(session_activity.get("total_tokens")) + request_total
-            session_activity["input_cost_usd"] = float(session_activity.get("input_cost_usd") or 0.0) + priced.input_cost_usd
-            session_activity["output_cost_usd"] = float(session_activity.get("output_cost_usd") or 0.0) + priced.output_cost_usd
-            session_activity["cached_cost_usd"] = float(session_activity.get("cached_cost_usd") or 0.0) + priced.cached_cost_usd
-            session_activity["total_cost_usd"] = float(session_activity.get("total_cost_usd") or 0.0) + priced.total_cost_usd
-            session_activity["cost_complete"] = bool(session_activity.get("cost_complete", True)) and priced.cost_complete
+            session_activity["input_cost_usd"] = float(session_activity.get("input_cost_usd") or 0.0) + input_cost_usd
+            session_activity["output_cost_usd"] = float(session_activity.get("output_cost_usd") or 0.0) + output_cost_usd
+            session_activity["cached_cost_usd"] = float(session_activity.get("cached_cost_usd") or 0.0) + cached_cost_usd
+            session_activity["total_cost_usd"] = float(session_activity.get("total_cost_usd") or 0.0) + total_cost_usd
+            session_activity["cost_complete"] = bool(session_activity.get("cost_complete", True)) and cost_complete
 
     for session_key, session_activity in daily_session_usage.items():
         usage_date, session_id = session_key

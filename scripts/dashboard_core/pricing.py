@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import math
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -133,6 +134,21 @@ class PricingCatalog:
         )
         self._resolved_rates[cache_key] = rates
         return rates
+
+    def supports_exact_usage_aggregation(self, provider: str, model: str) -> bool:
+        rates = self.resolve_rates(provider, model)
+        if rates is None:
+            return True
+        for rate in (
+            rates.input_per_million,
+            rates.output_per_million,
+            rates.cache_read_per_million,
+            rates.cache_write_per_million,
+        ):
+            nanodollars_per_token = rate * 1_000.0
+            if not math.isfinite(nanodollars_per_token) or not nanodollars_per_token.is_integer():
+                return False
+        return True
 
     def price_usage(
         self,
