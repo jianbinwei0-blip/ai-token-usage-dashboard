@@ -43,6 +43,7 @@ _CODEX_SESSION_USAGE_CACHE: dict[str, tuple[int, int, str, dict[str, object] | N
 _CLAUDE_REQUEST_RECORDS_CACHE: dict[str, tuple[int, int, list[dict[str, object]]]] = {}
 _CLAUDE_ATTRIBUTION_EVENTS_CACHE: dict[str, tuple[int, int, list[dict[str, object]]]] = {}
 _PI_SESSION_RECORDS_CACHE: dict[str, tuple[int, int, dict[str, object]]] = {}
+_JSONL_FILE_INDEX_CACHE: dict[str, tuple[dict[str, int], tuple[str, ...]]] = {}
 _PERSISTENT_CACHE_VERSION = 4
 _PERSISTENT_CACHE_LOADED_FROM: str | None = None
 _PERSISTENT_CACHE_DIRTY = False
@@ -249,6 +250,7 @@ def load_persistent_parse_caches(cache_path: Path | None) -> None:
     _CLAUDE_REQUEST_RECORDS_CACHE.clear()
     _CLAUDE_ATTRIBUTION_EVENTS_CACHE.clear()
     _PI_SESSION_RECORDS_CACHE.clear()
+    _JSONL_FILE_INDEX_CACHE.clear()
     _PERSISTENT_CACHE_LOADED_FROM = target
     _PERSISTENT_CACHE_DIRTY = False
 
@@ -262,6 +264,24 @@ def load_persistent_parse_caches(cache_path: Path | None) -> None:
 
     if not isinstance(payload, dict) or payload.get("version") != _PERSISTENT_CACHE_VERSION:
         return
+
+    file_indexes_payload = payload.get("file_indexes")
+    if isinstance(file_indexes_payload, dict):
+        for root_path, entry in file_indexes_payload.items():
+            if not isinstance(root_path, str) or not isinstance(entry, dict):
+                continue
+            directories_payload = entry.get("directories")
+            files_payload = entry.get("files")
+            if not isinstance(directories_payload, dict) or not isinstance(files_payload, list):
+                continue
+            directories = {
+                path: mtime_ns
+                for path, value in directories_payload.items()
+                if isinstance(path, str) and (mtime_ns := safe_non_negative_int(value))
+            }
+            files = tuple(path for path in files_payload if isinstance(path, str))
+            if directories:
+                _JSONL_FILE_INDEX_CACHE[root_path] = (directories, files)
 
     codex_payload = payload.get("codex")
     if isinstance(codex_payload, dict):
@@ -323,6 +343,13 @@ def save_persistent_parse_caches(cache_path: Path | None) -> None:
 
     payload = {
         "version": _PERSISTENT_CACHE_VERSION,
+        "file_indexes": {
+            root_path: {
+                "directories": directories,
+                "files": list(files),
+            }
+            for root_path, (directories, files) in _JSONL_FILE_INDEX_CACHE.items()
+        },
         "codex": {
             file_path: {
                 "size": size,
@@ -464,12 +491,78 @@ def add_usage_to_activity(
     )
 
 
+def _jsonl_file_index_is_current(directories: dict[str, int]) -> bool:
+    for directory, expected_mtime_ns in directories.items():
+        try:
+            if os.stat(directory).st_mtime_ns != expected_mtime_ns:
+                return False
+        except OSError:
+            return False
+    return True
+
+
+def _scan_jsonl_file_index(root: Path) -> tuple[dict[str, int], tuple[str, ...], bool]:
+    directories: dict[str, int] = {}
+    files: list[str] = []
+    stable = True
+    pending = [str(root)]
+
+    while pending:
+        directory = pending.pop()
+        try:
+            before_mtime_ns = os.stat(directory).st_mtime_ns
+            with os.scandir(directory) as scanner:
+                entries = list(scanner)
+            after_mtime_ns = os.stat(directory).st_mtime_ns
+        except OSError:
+            stable = False
+            continue
+
+        if before_mtime_ns != after_mtime_ns:
+            stable = False
+        directories[directory] = after_mtime_ns
+
+        child_directories: list[str] = []
+        directory_files: list[str] = []
+        for entry in entries:
+            try:
+                is_directory = entry.is_dir()
+                is_symlink = entry.is_symlink()
+            except OSError:
+                stable = False
+                continue
+            if is_directory:
+                if not is_symlink:
+                    child_directories.append(entry.path)
+            elif entry.name.endswith(".jsonl"):
+                directory_files.append(entry.path)
+
+        files.extend(sorted(directory_files))
+        pending.extend(reversed(sorted(child_directories)))
+
+    return directories, tuple(files), stable
+
+
 def iter_jsonl_files(root: Path):
-    for dirpath, dirnames, filenames in os.walk(root):
-        dirnames.sort()
-        for filename in sorted(filenames):
-            if filename.endswith(".jsonl"):
-                yield Path(dirpath) / filename
+    root_key = str(root)
+    cached = _JSONL_FILE_INDEX_CACHE.get(root_key)
+    if cached is not None and _jsonl_file_index_is_current(cached[0]):
+        for file_path in cached[1]:
+            yield Path(file_path)
+        return
+
+    directories, files, stable = _scan_jsonl_file_index(root)
+    if stable and directories:
+        refreshed = (directories, files)
+        if cached != refreshed:
+            _JSONL_FILE_INDEX_CACHE[root_key] = refreshed
+            _mark_persistent_cache_dirty()
+    elif cached is not None:
+        del _JSONL_FILE_INDEX_CACHE[root_key]
+        _mark_persistent_cache_dirty()
+
+    for file_path in files:
+        yield Path(file_path)
 
 
 def pricing_cache_key(pricing_catalog: PricingCatalog) -> str:
