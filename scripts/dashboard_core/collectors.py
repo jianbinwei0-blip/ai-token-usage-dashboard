@@ -85,7 +85,16 @@ def serialize_timestamp(value: object) -> str | None:
 
 
 def deserialize_timestamp(value: object) -> dt.datetime | None:
-    return parse_timestamp_local(value)
+    if not isinstance(value, str) or not value:
+        return None
+    normalized = value[:-1] + "+00:00" if value.endswith("Z") else value
+    try:
+        parsed = dt.datetime.fromisoformat(normalized)
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=dt.timezone.utc)
+    return parsed
 
 
 def _mark_persistent_cache_dirty() -> None:
@@ -102,9 +111,8 @@ def _serialize_record(record: dict[str, object]) -> dict[str, object]:
 def _deserialize_record(record: object) -> dict[str, object] | None:
     if not isinstance(record, dict):
         return None
-    deserialized = dict(record)
-    deserialized["timestamp"] = deserialize_timestamp(record.get("timestamp"))
-    return deserialized
+    record["timestamp"] = deserialize_timestamp(record.get("timestamp"))
+    return record
 
 
 def _serialize_codex_contribution(contribution: dict[str, object] | None) -> dict[str, object] | None:
@@ -120,9 +128,8 @@ def _deserialize_codex_contribution(contribution: object) -> dict[str, object] |
         return None
     if not isinstance(contribution, dict):
         return None
-    deserialized = dict(contribution)
-    deserialized["timestamp"] = deserialize_timestamp(contribution.get("timestamp"))
-    return deserialized
+    contribution["timestamp"] = deserialize_timestamp(contribution.get("timestamp"))
+    return contribution
 
 
 def merge_native_cost(target: dict[str, float] | None, native_cost: object) -> dict[str, float] | None:
@@ -194,15 +201,16 @@ def deserialize_pi_contribution(contribution: object) -> dict[str, object] | Non
     activity_rows = contribution.get("activity_rows")
     if not isinstance(usage_rows, list) or not isinstance(activity_rows, list):
         return None
-    return {
-        "session_id": normalized_bucket_value(contribution.get("session_id"), "unknown-session"),
-        "active_model": normalized_bucket_value(contribution.get("active_model"), DEFAULT_MODEL),
-        "offset": safe_non_negative_int(contribution.get("offset")),
-        "head_signature": normalized_bucket_value(contribution.get("head_signature"), ""),
-        "boundary_signature": normalized_bucket_value(contribution.get("boundary_signature"), ""),
-        "usage_rows": [dict(row) for row in usage_rows if isinstance(row, dict)],
-        "activity_rows": [row for item in activity_rows if (row := _deserialize_record(item)) is not None],
-    }
+    contribution["session_id"] = normalized_bucket_value(contribution.get("session_id"), "unknown-session")
+    contribution["active_model"] = normalized_bucket_value(contribution.get("active_model"), DEFAULT_MODEL)
+    contribution["offset"] = safe_non_negative_int(contribution.get("offset"))
+    contribution["head_signature"] = normalized_bucket_value(contribution.get("head_signature"), "")
+    contribution["boundary_signature"] = normalized_bucket_value(contribution.get("boundary_signature"), "")
+    contribution["usage_rows"] = [row for row in usage_rows if isinstance(row, dict)]
+    contribution["activity_rows"] = [
+        row for item in activity_rows if (row := _deserialize_record(item)) is not None
+    ]
+    return contribution
 
 
 def clone_pi_contribution(contribution: dict[str, object] | None, *, session_id: str) -> dict[str, object]:
