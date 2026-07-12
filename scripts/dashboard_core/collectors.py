@@ -42,6 +42,8 @@ CLAUDE_BUILTIN_COMMANDS = frozenset(
 CodexContribution = tuple[object, ...]
 ClaudeRequestRecord = tuple[str, str, dt.datetime, int, int, int, int, int, str]
 ClaudeAttributionEvent = tuple[str, str, str, dt.datetime]
+PiUsageRow = tuple[str, str, int, int, int, int, int, int, object]
+PiActivityRow = tuple[str, dt.datetime]
 
 
 _CODEX_SESSION_USAGE_CACHE: dict[str, tuple[int, int, str, CodexContribution | None]] = {}
@@ -121,19 +123,6 @@ def _prune_cache_for_root(cache: dict, root: Path, live_keys: set[str]) -> None:
     for key in stale_keys:
         del cache[key]
     _mark_persistent_cache_dirty()
-
-
-def _serialize_record(record: dict[str, object]) -> dict[str, object]:
-    serialized = dict(record)
-    serialized["timestamp"] = serialize_timestamp(record.get("timestamp"))
-    return serialized
-
-
-def _deserialize_record(record: object) -> dict[str, object] | None:
-    if not isinstance(record, dict):
-        return None
-    record["timestamp"] = deserialize_timestamp(record.get("timestamp"))
-    return record
 
 
 def _serialize_claude_request_record(record: ClaudeRequestRecord) -> list[object]:
@@ -340,6 +329,72 @@ def _read_file_signature_window(file_path: Path, start: int, end: int) -> str:
         return ""
 
 
+def _pi_usage_row_from_object(row: object) -> PiUsageRow | None:
+    if isinstance(row, tuple) and len(row) == 9:
+        return row
+    if isinstance(row, list) and len(row) == 9:
+        date_value = row[0]
+        if not isinstance(date_value, str):
+            return None
+        return (
+            date_value,
+            row[1] if isinstance(row[1], str) and row[1] else DEFAULT_MODEL,
+            row[2],
+            row[3],
+            row[4],
+            row[5],
+            row[6],
+            row[7],
+            row[8] if isinstance(row[8], dict) else None,
+        )
+    if not isinstance(row, dict):
+        return None
+    date_value = row.get("date")
+    if not isinstance(date_value, str):
+        return None
+    return (
+        date_value,
+        normalized_bucket_value(row.get("model"), DEFAULT_MODEL),
+        safe_non_negative_int(row.get("input_tokens")),
+        safe_non_negative_int(row.get("output_tokens")),
+        safe_non_negative_int(row.get("cache_read_tokens")),
+        safe_non_negative_int(row.get("cache_write_tokens")),
+        safe_non_negative_int(row.get("cached_tokens")),
+        safe_non_negative_int(row.get("total_tokens")),
+        row.get("native_cost") if isinstance(row.get("native_cost"), dict) else None,
+    )
+
+
+def _pi_activity_row_from_object(row: object) -> PiActivityRow | None:
+    if isinstance(row, tuple) and len(row) == 2 and isinstance(row[0], str) and isinstance(row[1], dt.datetime):
+        return row
+    if isinstance(row, list) and len(row) == 2:
+        timestamp = deserialize_timestamp(row[1])
+        if isinstance(row[0], str) and timestamp is not None:
+            return row[0], timestamp
+        return None
+    if not isinstance(row, dict):
+        return None
+    date_value = row.get("date")
+    timestamp_value = row.get("timestamp")
+    timestamp = timestamp_value if isinstance(timestamp_value, dt.datetime) else deserialize_timestamp(timestamp_value)
+    if not isinstance(date_value, str) or timestamp is None:
+        return None
+    return date_value, timestamp
+
+
+def _serialize_pi_usage_row(row: object) -> list[object] | None:
+    normalized = _pi_usage_row_from_object(row)
+    return list(normalized) if normalized is not None else None
+
+
+def _serialize_pi_activity_row(row: object) -> list[object] | None:
+    normalized = _pi_activity_row_from_object(row)
+    if normalized is None:
+        return None
+    return [normalized[0], serialize_timestamp(normalized[1])]
+
+
 def empty_pi_contribution(session_id: str) -> dict[str, object]:
     return {
         "session_id": normalized_bucket_value(session_id, "unknown-session"),
@@ -365,8 +420,16 @@ def serialize_pi_contribution(contribution: object) -> dict[str, object] | None:
         "offset": safe_non_negative_int(contribution.get("offset")),
         "head_signature": normalized_bucket_value(contribution.get("head_signature"), ""),
         "boundary_signature": normalized_bucket_value(contribution.get("boundary_signature"), ""),
-        "usage_rows": [dict(row) for row in usage_rows if isinstance(row, dict)],
-        "activity_rows": [_serialize_record(row) for row in activity_rows if isinstance(row, dict)],
+        "usage_rows": [
+            serialized
+            for row in usage_rows
+            if (serialized := _serialize_pi_usage_row(row)) is not None
+        ],
+        "activity_rows": [
+            serialized
+            for row in activity_rows
+            if (serialized := _serialize_pi_activity_row(row)) is not None
+        ],
     }
 
 
@@ -382,9 +445,11 @@ def deserialize_pi_contribution(contribution: object) -> dict[str, object] | Non
     contribution["offset"] = safe_non_negative_int(contribution.get("offset"))
     contribution["head_signature"] = normalized_bucket_value(contribution.get("head_signature"), "")
     contribution["boundary_signature"] = normalized_bucket_value(contribution.get("boundary_signature"), "")
-    contribution["usage_rows"] = [row for row in usage_rows if isinstance(row, dict)]
+    contribution["usage_rows"] = [
+        row for item in usage_rows if (row := _pi_usage_row_from_object(item)) is not None
+    ]
     contribution["activity_rows"] = [
-        row for item in activity_rows if (row := _deserialize_record(item)) is not None
+        row for item in activity_rows if (row := _pi_activity_row_from_object(item)) is not None
     ]
     return contribution
 
@@ -532,10 +597,24 @@ def load_persistent_parse_caches(cache_path: Path | None) -> None:
                 continue
             size = safe_non_negative_int(entry.get("size"))
             mtime_ns = safe_non_negative_int(entry.get("mtime_ns"))
-            contribution = deserialize_pi_contribution(entry.get("contribution"))
+            contribution_payload = entry.get("contribution")
+            usage_rows_payload = contribution_payload.get("usage_rows") if isinstance(contribution_payload, dict) else None
+            activity_rows_payload = (
+                contribution_payload.get("activity_rows") if isinstance(contribution_payload, dict) else None
+            )
+            legacy_rows = (
+                isinstance(usage_rows_payload, list)
+                and any(isinstance(row, dict) for row in usage_rows_payload)
+            ) or (
+                isinstance(activity_rows_payload, list)
+                and any(isinstance(row, dict) for row in activity_rows_payload)
+            )
+            contribution = deserialize_pi_contribution(contribution_payload)
             if contribution is None:
                 continue
             _PI_SESSION_RECORDS_CACHE[file_path] = (size, mtime_ns, contribution)
+            if legacy_rows:
+                _PERSISTENT_CACHE_DIRTY = True
 
 
 def save_persistent_parse_caches(cache_path: Path | None) -> None:
@@ -1712,15 +1791,33 @@ def _pi_usage_rows_index(contribution: dict[str, object]) -> dict[tuple[str, str
         usage_rows = []
     normalized_rows: list[dict[str, object]] = []
     for row in usage_rows:
-        if not isinstance(row, dict):
+        compact_row = _pi_usage_row_from_object(row)
+        if compact_row is None:
             continue
-        date_value = row.get("date")
-        if not isinstance(date_value, str):
-            continue
-        normalized_row = dict(row)
-        normalized_row["model"] = normalized_bucket_value(normalized_row.get("model"), DEFAULT_MODEL)
+        (
+            date_value,
+            model,
+            input_tokens,
+            output_tokens,
+            cache_read_tokens,
+            cache_write_tokens,
+            cached_tokens,
+            total_tokens,
+            native_cost,
+        ) = compact_row
+        normalized_row: dict[str, object] = {
+            "date": date_value,
+            "model": model,
+            "input_tokens": input_tokens,
+            "output_tokens": output_tokens,
+            "cache_read_tokens": cache_read_tokens,
+            "cache_write_tokens": cache_write_tokens,
+            "cached_tokens": cached_tokens,
+            "total_tokens": total_tokens,
+            "native_cost": dict(native_cost) if native_cost is not None else None,
+        }
         normalized_rows.append(normalized_row)
-        indexed[(date_value, normalized_row["model"])] = normalized_row
+        indexed[(date_value, model)] = normalized_row
     contribution["usage_rows"] = normalized_rows
     return indexed
 
@@ -1732,12 +1829,10 @@ def _pi_activity_rows_index(contribution: dict[str, object]) -> dict[str, dict[s
         activity_rows = []
     normalized_rows: list[dict[str, object]] = []
     for row in activity_rows:
-        if not isinstance(row, dict):
+        compact_row = _pi_activity_row_from_object(row)
+        if compact_row is None:
             continue
-        date_value = row.get("date")
-        timestamp = row.get("timestamp")
-        if not isinstance(date_value, str) or not isinstance(timestamp, dt.datetime):
-            continue
+        date_value, timestamp = compact_row
         normalized_row = {"date": date_value, "timestamp": timestamp}
         normalized_rows.append(normalized_row)
         indexed[date_value] = normalized_row
@@ -1875,8 +1970,16 @@ def parse_pi_session_contribution(
                     apply_pi_event_to_contribution(contribution, event, usage_rows, activity_rows)
                     processed_offset = file_size
 
-    contribution["usage_rows"] = sorted(usage_rows.values(), key=lambda row: (str(row["date"]), str(row["model"])))
-    contribution["activity_rows"] = sorted(activity_rows.values(), key=lambda row: str(row["date"]))
+    contribution["usage_rows"] = [
+        row
+        for item in sorted(usage_rows.values(), key=lambda value: (str(value["date"]), str(value["model"])))
+        if (row := _pi_usage_row_from_object(item)) is not None
+    ]
+    contribution["activity_rows"] = [
+        row
+        for item in sorted(activity_rows.values(), key=lambda value: str(value["date"]))
+        if (row := _pi_activity_row_from_object(item)) is not None
+    ]
     contribution["offset"] = processed_offset
     update_pi_contribution_signatures(file_path, contribution)
     return contribution
@@ -1957,33 +2060,32 @@ def collect_pi_usage_data(
 
         session_activity: dict[dt.date, ActivityTotals] = {}
         for activity_row in activity_rows:
-            if not isinstance(activity_row, dict):
+            compact_activity = _pi_activity_row_from_object(activity_row)
+            if compact_activity is None:
                 continue
-            timestamp = activity_row.get("timestamp")
-            if not isinstance(timestamp, dt.datetime):
-                continue
+            _usage_date_value, timestamp = compact_activity
             usage_date = timestamp.date()
             session_activity[usage_date] = ActivityTotals(date=usage_date, hour=timestamp.hour)
 
         for usage_row in usage_rows:
-            if not isinstance(usage_row, dict):
+            compact_usage = _pi_usage_row_from_object(usage_row)
+            if compact_usage is None:
                 continue
-            usage_date_value = usage_row.get("date")
-            if not isinstance(usage_date_value, str):
-                continue
+            (
+                usage_date_value,
+                model,
+                input_tokens,
+                output_tokens,
+                cache_read_tokens,
+                cache_write_tokens,
+                cached_tokens,
+                total_tokens,
+                native_cost,
+            ) = compact_usage
             try:
                 usage_date = dt.date.fromisoformat(usage_date_value)
             except ValueError:
                 continue
-
-            input_tokens = safe_non_negative_int(usage_row.get("input_tokens"))
-            output_tokens = safe_non_negative_int(usage_row.get("output_tokens"))
-            cache_read_tokens = safe_non_negative_int(usage_row.get("cache_read_tokens"))
-            cache_write_tokens = safe_non_negative_int(usage_row.get("cache_write_tokens"))
-            cached_tokens = safe_non_negative_int(usage_row.get("cached_tokens"))
-            total_tokens = safe_non_negative_int(usage_row.get("total_tokens"))
-            native_cost = usage_row.get("native_cost") if isinstance(usage_row.get("native_cost"), dict) else None
-            model = normalized_bucket_value(usage_row.get("model"), DEFAULT_MODEL)
             priced = catalog.price_usage(
                 "pi",
                 model,
