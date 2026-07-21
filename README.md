@@ -78,6 +78,7 @@ Environment variables:
 - `AI_USAGE_PI_AGENT_ROOT` (default: `~/.pi/agent`)
 - `AI_USAGE_DASHBOARD_HTML` (default via `scripts/run_local.sh`: `<repo>/tmp/index.runtime.html`, seeded from `<repo>/dashboard/index.html`)
 - `AI_USAGE_PRICING_FILE` (optional JSON rate-card override file merged over the built-in pricing table)
+- `AI_USAGE_PARSE_CACHE_FILE` (persistent observed-session history and parse cache; default: `<repo>/tmp/recalc_parse_cache.json`)
 - `AI_USAGE_RECALC_LOG_FILE` (optional JSONL file for persistent `/recalc` timing/error logs; default: `<repo>/tmp/recalc_timings.jsonl`)
 - `AI_USAGE_CHATGPT_USAGE` (`auto` or `off`; default: `auto`)
 - `AI_USAGE_CODEX_BIN` (Codex executable used for the app-server account API; default: `codex`)
@@ -167,6 +168,7 @@ curl http://127.0.0.1:8765/health
 - Claude request usage is deduplicated by `(sessionId, requestId)`, keeps the highest observed token values for the request, computes `cached_tokens = cache_creation_input_tokens + cache_read_input_tokens`, and derives cost from the model rate card.
 - Claude-style context attribution is extracted when transcript events expose it: Skills from `<command-message>` slash commands, Agents/Subagents from `Agent`/`Task` tool calls, MCP servers from `mcp__server__method` tools, Tools from `tool_use` blocks, and Plugins / Extensions from namespaced slash commands plus plugin/extension metadata or tool namespaces. Attribution token/cost shares are estimated from the session totals for matching transcript events.
 - PI usage is read from `~/.pi/agent/sessions/**/*.jsonl`, tracks the active model via `model_change` events, computes `cached_tokens = cacheRead + cacheWrite`, prefers native `message.usage.cost.*` when present, and resumes parsing from the last verified byte offset when a session log grows append-only.
+- Once a Codex, Claude, or PI session has been observed, its last recorded usage remains in the persistent parse history if the source session log is later deleted. To reset history that no longer has a source log, stop the service, delete `AI_USAGE_PARSE_CACHE_FILE`, and restart; sessions deleted before the dashboard first observed them cannot be recovered.
 - Unmapped provider/model pricing is surfaced as partial cost in the API/UI instead of silently treated as trusted zero cost.
 - `/recalc` responses expose `Server-Timing` headers and `timings_ms` in the JSON payload, and the dashboard hero shows the latest refresh timing summary for quick diagnosis.
 - No third-party services are required.

@@ -7,7 +7,13 @@ import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import ai_usage_recalc_server as server
-from dashboard_core.collectors import collect_codex_usage_data
+from dashboard_core.collectors import (
+    collect_claude_usage_data,
+    collect_codex_usage_data,
+    collect_pi_usage_data,
+    load_persistent_parse_caches,
+    save_persistent_parse_caches,
+)
 
 
 class UsageAggregationTests(unittest.TestCase):
@@ -533,6 +539,122 @@ class UsageAggregationTests(unittest.TestCase):
             self.assertAlmostEqual(totals[expected_day].cached_cost_usd, 0.0)
             self.assertAlmostEqual(totals[expected_day].total_cost_usd, 0.017325)
             self.assertTrue(totals[expected_day].cost_complete)
+
+    def test_deleted_session_logs_remain_in_persistent_usage_history(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            cache_file = root / "usage-history.json"
+            codex_root = root / "codex"
+            claude_root = root / "claude"
+            pi_root = root / "pi"
+
+            codex_session = codex_root / "2026" / "03" / "08" / "session.jsonl"
+            self._write_jsonl(
+                codex_session,
+                [
+                    {
+                        "timestamp": "2026-03-08T12:00:00Z",
+                        "type": "session_meta",
+                        "payload": {"id": "codex-history", "originator": "codex_cli_rs"},
+                    },
+                    {"type": "turn_context", "payload": {"model": "gpt-5.2"}},
+                    {
+                        "type": "event_msg",
+                        "payload": {
+                            "type": "token_count",
+                            "info": {
+                                "total_token_usage": {
+                                    "input_tokens": 100,
+                                    "cached_input_tokens": 20,
+                                    "output_tokens": 30,
+                                    "total_tokens": 130,
+                                }
+                            },
+                        },
+                    },
+                ],
+            )
+            codex_duplicate = codex_root / "2026" / "03" / "08" / "session-copy.jsonl"
+            codex_duplicate.write_text(codex_session.read_text(encoding="utf-8"), encoding="utf-8")
+
+            claude_session = claude_root / "project" / "session.jsonl"
+            self._write_jsonl(
+                claude_session,
+                [
+                    {
+                        "timestamp": "2026-03-08T12:05:00Z",
+                        "sessionId": "claude-history",
+                        "requestId": "request-1",
+                        "message": {
+                            "model": "claude-sonnet-4-6",
+                            "usage": {
+                                "input_tokens": 50,
+                                "cache_creation_input_tokens": 10,
+                                "cache_read_input_tokens": 20,
+                                "output_tokens": 15,
+                            },
+                        },
+                    }
+                ],
+            )
+
+            pi_session = pi_root / "sessions" / "project" / "session.jsonl"
+            self._write_jsonl(
+                pi_session,
+                [
+                    {"type": "session", "id": "pi-history", "timestamp": "2026-03-08T12:10:00Z"},
+                    {
+                        "type": "model_change",
+                        "timestamp": "2026-03-08T12:10:01Z",
+                        "modelId": "gpt-5.4",
+                    },
+                    {
+                        "type": "message",
+                        "timestamp": "2026-03-08T12:11:00Z",
+                        "message": {
+                            "role": "assistant",
+                            "usage": {
+                                "input": 80,
+                                "output": 20,
+                                "cacheRead": 5,
+                                "cacheWrite": 5,
+                                "totalTokens": 110,
+                            },
+                        },
+                    },
+                ],
+            )
+
+            load_persistent_parse_caches(cache_file)
+            before = (
+                collect_codex_usage_data(codex_root),
+                collect_claude_usage_data(claude_root),
+                collect_pi_usage_data(pi_root),
+            )
+            self.assertEqual(sum(day.sessions for day in before[0][0].values()), 2)
+            self.assertEqual(sum(day.total_tokens for day in before[0][0].values()), 260)
+            save_persistent_parse_caches(cache_file)
+
+            codex_session.unlink()
+            codex_duplicate.unlink()
+            claude_session.unlink()
+            pi_session.unlink()
+            after_deletion = (
+                collect_codex_usage_data(codex_root),
+                collect_claude_usage_data(claude_root),
+                collect_pi_usage_data(pi_root),
+            )
+            self.assertEqual(after_deletion, before)
+            save_persistent_parse_caches(cache_file)
+
+            load_persistent_parse_caches(root / "empty-cache.json")
+            load_persistent_parse_caches(cache_file)
+            after_restart = (
+                collect_codex_usage_data(codex_root),
+                collect_claude_usage_data(claude_root),
+                collect_pi_usage_data(pi_root),
+            )
+            self.assertEqual(after_restart, before)
 
     def test_combine_daily_totals_merges_overlapping_dates_and_breakdowns(self) -> None:
         day_a = datetime(2026, 2, 27).date()

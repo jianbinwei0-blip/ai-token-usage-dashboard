@@ -124,14 +124,16 @@ def persistent_parse_caches_dirty() -> bool:
     return _PERSISTENT_CACHE_DIRTY
 
 
-def _prune_cache_for_root(cache: dict, root: Path, live_keys: set[str]) -> None:
-    root_prefix = os.path.join(str(root), "")
-    stale_keys = [key for key in cache if key.startswith(root_prefix) and key not in live_keys]
-    if not stale_keys:
-        return
-    for key in stale_keys:
-        del cache[key]
-    _mark_persistent_cache_dirty()
+def _cache_entries_for_root(cache: dict, root: Path) -> list[tuple[str, object]]:
+    """Return every session record observed below root, including deleted source files."""
+    root_prefix = os.path.join(os.fspath(root), "")
+    return [(key, value) for key, value in cache.items() if key.startswith(root_prefix)]
+
+
+def _ordered_observed_paths(live_paths: list[str], cached_paths: set[str]) -> list[str]:
+    """Keep the legacy live traversal order, then append deleted log paths deterministically."""
+    live_path_set = set(live_paths)
+    return [path for path in live_paths if path in cached_paths] + sorted(cached_paths - live_path_set)
 
 
 def _serialize_claude_request_record(record: ClaudeRequestRecord) -> list[object]:
@@ -1152,31 +1154,76 @@ def parse_codex_session_usage_cached(
     return contribution
 
 
+def _reprice_codex_contribution(
+    contribution: CodexContribution,
+    pricing_catalog: PricingCatalog,
+) -> CodexContribution:
+    priced = pricing_catalog.price_usage(
+        "codex",
+        contribution[5],
+        uncached_input_tokens=contribution[6],
+        output_tokens=contribution[7],
+        cache_read_tokens=contribution[8],
+    )
+    return (
+        *contribution[:10],
+        cost_to_nanodollars(priced.input_cost_usd),
+        cost_to_nanodollars(priced.output_cost_usd),
+        cost_to_nanodollars(priced.cached_cost_usd),
+        cost_to_nanodollars(priced.total_cost_usd),
+        priced.cost_complete,
+    )
+
+
+def iter_observed_codex_contributions(
+    sessions_root: Path,
+    pricing_catalog: PricingCatalog,
+    current_pricing_key: str,
+):
+    """Yield every observed log contribution, even after its source file is deleted."""
+    live_paths: list[str] = []
+    for file_path in iter_jsonl_files(sessions_root):
+        live_paths.append(os.fspath(file_path))
+        parse_codex_session_usage_cached(
+            file_path,
+            sessions_root,
+            pricing_catalog,
+            current_pricing_key=current_pricing_key,
+        )
+
+    entries = dict(_cache_entries_for_root(_CODEX_SESSION_USAGE_CACHE, sessions_root))
+    for cache_path in _ordered_observed_paths(live_paths, set(entries)):
+        entry = entries[cache_path]
+        size, mtime_ns, stored_pricing_key, contribution = entry
+        if contribution is None:
+            continue
+        if stored_pricing_key != current_pricing_key:
+            contribution = _reprice_codex_contribution(contribution, pricing_catalog)
+            _CODEX_SESSION_USAGE_CACHE[cache_path] = (
+                size,
+                mtime_ns,
+                current_pricing_key,
+                contribution,
+            )
+            _mark_persistent_cache_dirty()
+        yield cache_path, contribution
+
+
 def collect_codex_usage_data(
     sessions_root: Path,
     pricing_catalog: PricingCatalog | None = None,
 ) -> tuple[dict[dt.date, DailyTotals], dict[tuple[dt.date, int], ActivityTotals]]:
     totals: dict[dt.date, DailyTotals] = {}
     activity_totals: dict[tuple[dt.date, int], ActivityTotals] = {}
-    if not sessions_root.exists():
-        return totals, activity_totals
-
     catalog = pricing_catalog or PricingCatalog.from_file(None)
     current_pricing_key = pricing_cache_key(catalog)
     bucket_sessions: dict[tuple[dt.date, str, str], set[str]] = {}
-    live_cache_keys: set[str] = set()
 
-    for file_path in iter_jsonl_files(sessions_root):
-        live_cache_keys.add(os.fspath(file_path))
-        contribution = parse_codex_session_usage_cached(
-            file_path,
-            sessions_root,
-            catalog,
-            current_pricing_key=current_pricing_key,
-        )
-        if contribution is None:
-            continue
-
+    for file_path, contribution in iter_observed_codex_contributions(
+        sessions_root,
+        catalog,
+        current_pricing_key,
+    ):
         (
             usage_date,
             activity_date,
@@ -1246,8 +1293,6 @@ def collect_codex_usage_data(
         activity.cached_cost_usd += cached_cost_usd
         activity.total_cost_usd += total_cost_usd
         activity.cost_complete = activity.cost_complete and cost_complete
-
-    _prune_cache_for_root(_CODEX_SESSION_USAGE_CACHE, sessions_root, live_cache_keys)
 
     for (usage_date, agent_cli, model), sessions in bucket_sessions.items():
         daily = totals.get(usage_date)
@@ -1688,30 +1733,46 @@ def apply_claude_session_attribution(
         )
 
 
-def collect_claude_usage_data(
+def collect_observed_claude_records(
     claude_projects_root: Path,
-    pricing_catalog: PricingCatalog | None = None,
-) -> tuple[dict[dt.date, DailyTotals], dict[tuple[dt.date, int], ActivityTotals]]:
-    totals: dict[dt.date, DailyTotals] = {}
-    activity_totals: dict[tuple[dt.date, int], ActivityTotals] = {}
-    if not claude_projects_root.exists():
-        return totals, activity_totals
+) -> tuple[
+    dict[tuple[str, str], ClaudeRequestRecord],
+    dict[tuple[dt.date, str], list[ClaudeAttributionEvent]],
+]:
+    """Merge live and previously observed Claude records into a deletion-safe history."""
+    live_paths: list[str] = []
+    for file_path in iter_jsonl_files(claude_projects_root):
+        live_paths.append(os.fspath(file_path))
+        parse_claude_request_records_cached(file_path)
+        parse_claude_attribution_events_cached(file_path)
 
-    catalog = pricing_catalog or PricingCatalog.from_file(None)
+    request_entries = dict(_cache_entries_for_root(_CLAUDE_REQUEST_RECORDS_CACHE, claude_projects_root))
+    attribution_entries = dict(
+        _cache_entries_for_root(_CLAUDE_ATTRIBUTION_EVENTS_CACHE, claude_projects_root)
+    )
+    history_paths = _ordered_observed_paths(
+        live_paths,
+        request_entries.keys() | attribution_entries.keys(),
+    )
+
     request_usage: dict[tuple[str, str], ClaudeRequestRecord] = {}
     attribution_events_by_session_date: dict[tuple[dt.date, str], list[ClaudeAttributionEvent]] = defaultdict(list)
-    live_cache_keys: set[str] = set()
 
-    for file_path in iter_jsonl_files(claude_projects_root):
-        live_cache_keys.add(os.fspath(file_path))
+    for file_path in history_paths:
         file_stem = path_stem(file_path)
-        for attribution_event in parse_claude_attribution_events_cached(file_path):
-            _category, _name, session_id, timestamp = attribution_event
-            if not session_id:
-                session_id = file_stem
-            attribution_events_by_session_date[(timestamp.date(), session_id)].append(attribution_event)
+        attribution_entry = attribution_entries.get(file_path)
+        if attribution_entry is not None:
+            for category, name, session_id, timestamp in attribution_entry[2]:
+                effective_session_id = normalized_bucket_value(session_id, file_stem)
+                effective_event = (category, name, effective_session_id, timestamp)
+                attribution_events_by_session_date[(timestamp.date(), effective_session_id)].append(
+                    effective_event
+                )
 
-        for record in parse_claude_request_records_cached(file_path):
+        request_entry = request_entries.get(file_path)
+        if request_entry is None:
+            continue
+        for record in request_entry[2]:
             (
                 session_id,
                 request_id,
@@ -1723,9 +1784,7 @@ def collect_claude_usage_data(
                 output_tokens,
                 model,
             ) = record
-            if not session_id:
-                session_id = file_stem
-
+            session_id = normalized_bucket_value(session_id, file_stem)
             dedupe_key = (session_id, request_id)
             current = request_usage.get(dedupe_key)
             if current is None:
@@ -1754,8 +1813,19 @@ def collect_claude_usage_data(
                 model if model != DEFAULT_MODEL else current[8],
             )
 
-    _prune_cache_for_root(_CLAUDE_REQUEST_RECORDS_CACHE, claude_projects_root, live_cache_keys)
-    _prune_cache_for_root(_CLAUDE_ATTRIBUTION_EVENTS_CACHE, claude_projects_root, live_cache_keys)
+    return request_usage, attribution_events_by_session_date
+
+
+def collect_claude_usage_data(
+    claude_projects_root: Path,
+    pricing_catalog: PricingCatalog | None = None,
+) -> tuple[dict[dt.date, DailyTotals], dict[tuple[dt.date, int], ActivityTotals]]:
+    totals: dict[dt.date, DailyTotals] = {}
+    activity_totals: dict[tuple[dt.date, int], ActivityTotals] = {}
+    catalog = pricing_catalog or PricingCatalog.from_file(None)
+    request_usage, attribution_events_by_session_date = collect_observed_claude_records(
+        claude_projects_root
+    )
 
     daily_sessions: dict[dt.date, set[str]] = {}
     bucket_sessions: dict[tuple[dt.date, str, str], set[str]] = {}
@@ -2166,27 +2236,33 @@ def parse_pi_session_contribution_cached(file_path) -> dict[str, object]:
     return contribution
 
 
+def iter_observed_pi_contributions(sessions_root: Path):
+    """Yield every observed log contribution, even after its source file is deleted."""
+    live_paths: list[str] = []
+    for file_path in iter_jsonl_files(sessions_root):
+        live_paths.append(os.fspath(file_path))
+        parse_pi_session_contribution_cached(file_path)
+
+    entries = dict(_cache_entries_for_root(_PI_SESSION_RECORDS_CACHE, sessions_root))
+    for cache_path in _ordered_observed_paths(live_paths, set(entries)):
+        entry = entries[cache_path]
+        _size, _mtime_ns, contribution = entry
+        if isinstance(contribution, dict):
+            yield cache_path, contribution
+
+
 def collect_pi_usage_data(
     pi_agent_root: Path,
     pricing_catalog: PricingCatalog | None = None,
 ) -> tuple[dict[dt.date, DailyTotals], dict[tuple[dt.date, int], ActivityTotals]]:
     totals: dict[dt.date, DailyTotals] = {}
     activity_totals: dict[tuple[dt.date, int], ActivityTotals] = {}
-    if not pi_agent_root.exists():
-        return totals, activity_totals
-
     sessions_root = pi_agent_root / "sessions"
-    if not sessions_root.exists():
-        return totals, activity_totals
-
     catalog = pricing_catalog or PricingCatalog.from_file(None)
     daily_sessions: dict[dt.date, set[str]] = {}
     bucket_sessions: dict[tuple[dt.date, str, str], set[str]] = {}
-    live_cache_keys: set[str] = set()
 
-    for file_path in iter_jsonl_files(sessions_root):
-        live_cache_keys.add(os.fspath(file_path))
-        contribution = parse_pi_session_contribution_cached(file_path)
+    for file_path, contribution in iter_observed_pi_contributions(sessions_root):
         session_id = normalized_bucket_value(contribution.get("session_id"), path_stem(file_path))
         usage_rows = contribution.get("usage_rows")
         activity_rows = contribution.get("activity_rows")
@@ -2315,8 +2391,6 @@ def collect_pi_usage_data(
             total_activity.cached_cost_usd += activity.cached_cost_usd
             total_activity.total_cost_usd += activity.total_cost_usd
             total_activity.cost_complete = total_activity.cost_complete and activity.cost_complete
-
-    _prune_cache_for_root(_PI_SESSION_RECORDS_CACHE, sessions_root, live_cache_keys)
 
     for usage_date, sessions in daily_sessions.items():
         if usage_date in totals:
