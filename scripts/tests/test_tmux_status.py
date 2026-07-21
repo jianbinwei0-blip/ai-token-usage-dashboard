@@ -314,6 +314,7 @@ class TmuxStatusTests(unittest.TestCase):
         self.assertLessEqual(len(compact), 96)
         self.assertIn("5h 88% ↻18:00", compact)
         self.assertIn("7d 83% ↻Fri 09:00", compact)
+        self.assertEqual(render_tmux_status(snapshot, now=now, max_width=16), "5h 88% ↻18:00")
         self.assertNotIn(" I ", compact)
         self.assertNotIn(" O ", compact)
         styled = render_tmux_status(snapshot, now=now, max_width=96, use_tmux_style=True)
@@ -342,6 +343,49 @@ class TmuxStatusTests(unittest.TestCase):
         self.assertEqual(subscription_effective_state(stale_subscription, now=now), "stale")
         stale_output = render_tmux_status({**snapshot, "subscription": stale_subscription}, now=now, max_width=96)
         self.assertIn("GPT Pro Lite stale", stale_output)
+
+    def test_render_always_shows_inactive_five_hour_quota_and_reset_state(self) -> None:
+        now = dt.datetime(2026, 4, 21, 15, 5, tzinfo=dt.timezone.utc)
+        snapshot = {
+            "generated_at": "2026-04-21T15:04:00+00:00",
+            "health": "ok",
+            "scope": "combined",
+            "providers": ["codex"],
+            "range": {"preset": "mtd"},
+            "metrics": {"today_tokens": 100, "range_tokens": 200, "range_cost_usd": 3},
+            "quality": {"pricing_complete": True},
+            "subscription": {
+                "state": "ok",
+                "fetched_at": "2026-04-21T15:04:00+00:00",
+                "account_type": "chatgpt",
+                "plan": "prolite",
+                "limits": [
+                    {
+                        "id": "codex",
+                        "primary": {
+                            "remaining_percent": 100,
+                            "window_duration_minutes": 300,
+                            "resets_at": None,
+                            "inferred": True,
+                        },
+                        "secondary": {
+                            "remaining_percent": 83,
+                            "window_duration_minutes": 10_080,
+                            "resets_at": int(
+                                dt.datetime(2026, 4, 24, 9, 0, tzinfo=dt.timezone.utc).timestamp()
+                            ),
+                        },
+                        "rate_limit_reached_type": None,
+                    }
+                ],
+            },
+        }
+
+        for width in (96, 48, 16):
+            with self.subTest(width=width):
+                output = render_tmux_status(snapshot, now=now, max_width=width)
+                self.assertIn("5h 100% ↻now", output)
+                self.assertLessEqual(len(output), width)
 
     def test_render_includes_only_a_more_constrained_named_quota(self) -> None:
         now = dt.datetime(2026, 4, 21, 15, 5, tzinfo=dt.timezone.utc)
