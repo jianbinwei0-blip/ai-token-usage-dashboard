@@ -137,6 +137,7 @@ class HarnessContractsTests(unittest.TestCase):
                 sessions_root=codex_root,
                 claude_projects_root=claude_root,
                 pi_agent_root=root / "pi-agent",
+                dsh_home=root / "dsh-home",
             )
             fixed_now = datetime(2026, 3, 4, 15, 0, tzinfo=timezone.utc)
 
@@ -154,7 +155,7 @@ class HarnessContractsTests(unittest.TestCase):
             self.assertEqual(dataset["generated_at"], fixed_now.isoformat())
             self.assertEqual(
                 dataset["providers_available"],
-                {"codex": True, "claude": True, "pi": False, "combined": True},
+                {"codex": True, "claude": True, "pi": False, "dsh": False, "combined": True},
             )
             self.assertEqual(payload_first["input_tokens"], 110)
             self.assertEqual(payload_first["output_tokens"], 25)
@@ -313,6 +314,7 @@ class HarnessContractsTests(unittest.TestCase):
                 sessions_root=codex_root,
                 claude_projects_root=claude_root,
                 pi_agent_root=root / "pi-agent",
+                dsh_home=root / "dsh-home",
             )
             monday_now = datetime(2026, 3, 2, 18, 0, tzinfo=timezone.utc)
 
@@ -378,6 +380,7 @@ class HarnessContractsTests(unittest.TestCase):
                 sessions_root=codex_root,
                 claude_projects_root=claude_root,
                 pi_agent_root=root / "pi-agent",
+                dsh_home=root / "dsh-home",
             )
             wednesday_now = datetime(2026, 3, 4, 18, 0, tzinfo=timezone.utc)
 
@@ -441,6 +444,7 @@ class HarnessContractsTests(unittest.TestCase):
                 sessions_root=codex_root,
                 claude_projects_root=root / "claude",
                 pi_agent_root=root / "pi-agent",
+                dsh_home=root / "dsh-home",
             )
 
             payload = recalc_dashboard(config, now=datetime(2026, 3, 4, 15, 0, tzinfo=timezone.utc))
@@ -525,6 +529,7 @@ class HarnessContractsTests(unittest.TestCase):
                 sessions_root=codex_root,
                 claude_projects_root=claude_root,
                 pi_agent_root=pi_agent_root,
+                dsh_home=root / "dsh-home",
             )
             fixed_now = datetime(2026, 3, 4, 15, 0, tzinfo=timezone.utc)
 
@@ -534,7 +539,7 @@ class HarnessContractsTests(unittest.TestCase):
 
             self.assertEqual(
                 dataset["providers_available"],
-                {"codex": True, "claude": False, "pi": True, "combined": True},
+                {"codex": True, "claude": False, "pi": True, "dsh": False, "combined": True},
             )
             self.assertEqual(
                 dataset["providers"]["pi"]["rows"],
@@ -576,6 +581,120 @@ class HarnessContractsTests(unittest.TestCase):
             self.assertIn('<option value="codex">Codex</option>', html)
             self.assertIn('<option value="pi">PI</option>', html)
             self.assertNotIn('<option value="claude">Claude</option>', html)
+
+
+    def test_recalc_pipeline_adds_deepseek_harness_provider_and_combined_usage(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            dashboard_path = root / "dashboard" / "index.html"
+            dashboard_path.parent.mkdir(parents=True, exist_ok=True)
+            dashboard_path.write_text(HTML_TEMPLATE, encoding="utf-8")
+            dsh_home = root / "dsh-home"
+            timestamp = int(datetime(2026, 3, 3, 21, 0, tzinfo=timezone.utc).timestamp() * 1000)
+            self._write_jsonl(
+                dsh_home / "sessions" / "--Users-jwei--" / "dsh-session-a" / "session.jsonl",
+                [
+                    {
+                        "type": "session",
+                        "version": 0,
+                        "id": "dsh-session-a",
+                        "createdAt": timestamp,
+                    },
+                    {
+                        "type": "request/header",
+                        "seq": 0,
+                        "time": timestamp,
+                        "data": {
+                            "header": {
+                                "config": {
+                                    "provider": "openai-codex",
+                                    "model": "gpt-5.4",
+                                }
+                            },
+                            "reason": "initial",
+                        },
+                    },
+                    {
+                        "type": "assistant/message",
+                        "seq": 1,
+                        "time": timestamp,
+                        "data": {
+                            "turn": 1,
+                            "step": 1,
+                            "message": {"role": "assistant", "content": []},
+                            "usage": {
+                                "inputTokens": 30,
+                                "outputTokens": 3,
+                                "cacheReadTokens": 7,
+                            },
+                        },
+                    },
+                ],
+            )
+
+            config = DashboardConfig(
+                host="127.0.0.1",
+                port=8765,
+                dashboard_html=dashboard_path,
+                sessions_root=root / "codex",
+                claude_projects_root=root / "claude",
+                pi_agent_root=root / "pi-agent",
+                dsh_home=dsh_home,
+            )
+            fixed_now = datetime(2026, 3, 4, 15, 0, tzinfo=timezone.utc)
+
+            payload = recalc_dashboard(config, now=fixed_now)
+            html = dashboard_path.read_text(encoding="utf-8")
+            dataset = self._read_dataset_from_html(html)
+            usage_day = datetime.fromtimestamp(timestamp / 1000, tz=timezone.utc).astimezone().date().isoformat()
+
+            self.assertEqual(
+                dataset["providers_available"],
+                {"codex": False, "claude": False, "pi": False, "dsh": True, "combined": True},
+            )
+            self.assertEqual(payload["ytd_total_tokens"], 40)
+            self.assertEqual(payload["providers"]["dsh"]["ytd_total_tokens"], 40)
+            self.assertEqual(payload["providers"]["combined"]["ytd_total_tokens"], 40)
+            self.assertEqual(dataset["paths"]["dsh_home"], str(dsh_home))
+            self.assertEqual(dataset["paths"]["dsh_sessions_root"], str(dsh_home / "sessions"))
+            self.assertEqual(
+                dataset["providers"]["dsh"]["rows"],
+                [
+                    {
+                        "date": usage_day,
+                        "sessions": 1,
+                        "input_tokens": 30,
+                        "output_tokens": 3,
+                        "cached_tokens": 7,
+                        "total_tokens": 40,
+                        "input_cost_usd": 0.000075,
+                        "output_cost_usd": 0.000045,
+                        "cached_cost_usd": 0.00000175,
+                        "total_cost_usd": 0.00012175,
+                        "cost_complete": True,
+                        "cost_status": "complete",
+                        "breakdown_rows": [
+                            {
+                                "agent_cli": "dsh",
+                                "model": "gpt-5.4",
+                                "sessions": 1,
+                                "input_tokens": 30,
+                                "output_tokens": 3,
+                                "cached_tokens": 7,
+                                "total_tokens": 40,
+                                "input_cost_usd": 0.000075,
+                                "output_cost_usd": 0.000045,
+                                "cached_cost_usd": 0.00000175,
+                                "total_cost_usd": 0.00012175,
+                                "cost_complete": True,
+                                "cost_status": "complete",
+                            }
+                        ],
+                    }
+                ],
+            )
+            self.assertIn('<option value="dsh">DeepSeek Harness</option>', html)
+            self.assertNotIn('<option value="combined">Combined</option>', html)
 
 
 if __name__ == "__main__":

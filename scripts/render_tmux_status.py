@@ -31,7 +31,7 @@ from dashboard_core.tmux_status import build_tmux_status_snapshot, next_refresh_
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Render compact tmux status output for the AI token dashboard.")
-    parser.add_argument("--scope", default="combined", choices=["combined", "codex", "claude", "pi"])
+    parser.add_argument("--scope", default="combined", choices=["combined", "codex", "claude", "pi", "dsh"])
     parser.add_argument("--range", dest="range_preset", default="mtd")
     parser.add_argument("--cache-file", default=str(REPO_ROOT / "tmp" / "tmux_status.json"))
     parser.add_argument("--refresh-interval-minutes", type=int, default=5)
@@ -80,6 +80,7 @@ def build_config() -> DashboardConfig:
         sessions_root=config.sessions_root,
         claude_projects_root=config.claude_projects_root,
         pi_agent_root=config.pi_agent_root,
+        dsh_home=config.dsh_home,
         pricing_file=config.pricing_file,
         parse_cache_file=config.parse_cache_file,
         recalc_log_file=config.recalc_log_file,

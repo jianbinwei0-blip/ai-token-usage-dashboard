@@ -38,6 +38,8 @@
       <string>/ABSOLUTE/PATH/TO/.claude/projects</string>
       <key>AI_USAGE_PI_AGENT_ROOT</key>
       <string>/ABSOLUTE/PATH/TO/.pi/agent</string>
+      <key>AI_USAGE_DSH_HOME</key>
+      <string>/ABSOLUTE/PATH/TO/.dsh</string>
     </dict>
   </dict>
 </plist>

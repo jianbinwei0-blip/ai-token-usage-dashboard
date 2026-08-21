@@ -107,19 +107,27 @@ class PricingCatalog:
         if cache_key in self._resolved_rates:
             return self._resolved_rates[cache_key]
 
-        provider_models = (self._rate_card.get("providers") or {}).get(provider) or {}
-        if not isinstance(provider_models, dict):
-            self._resolved_rates[cache_key] = None
-            return None
-
+        providers = self._rate_card.get("providers") or {}
+        provider_candidates = (provider, "pi", "claude", "codex") if provider == "dsh" else (provider,)
         best_match: tuple[int, dict] | None = None
-        for pattern, rate_info in provider_models.items():
-            if not isinstance(pattern, str) or not isinstance(rate_info, dict):
+        for candidate in provider_candidates:
+            provider_models = providers.get(candidate) or {}
+            if not isinstance(provider_models, dict):
                 continue
-            if model == pattern or model.startswith(pattern):
-                match = (len(pattern), rate_info)
-                if best_match is None or match[0] > best_match[0]:
-                    best_match = match
+            candidate_match: tuple[int, dict] | None = None
+            for pattern, rate_info in provider_models.items():
+                if not isinstance(pattern, str) or not isinstance(rate_info, dict):
+                    continue
+                if model == pattern or model.startswith(pattern):
+                    match = (len(pattern), rate_info)
+                    if candidate_match is None or match[0] > candidate_match[0]:
+                        candidate_match = match
+            if candidate_match is not None:
+                if candidate == provider:
+                    best_match = candidate_match
+                    break
+                if best_match is None or candidate_match[0] > best_match[0]:
+                    best_match = candidate_match
 
         if best_match is None:
             self._resolved_rates[cache_key] = None

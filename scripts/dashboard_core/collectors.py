@@ -5,6 +5,8 @@ import hashlib
 import json
 import os
 import re
+import shutil
+import subprocess
 from collections import Counter, defaultdict
 from pathlib import Path
 
@@ -45,14 +47,16 @@ ClaudeRequestRecord = tuple[str, str, dt.datetime, int, int, int, int, int, str]
 ClaudeAttributionEvent = tuple[str, str, str, dt.datetime]
 PiUsageRow = tuple[str, str, int, int, int, int, int, int, object, object]
 PiActivityRow = tuple[str, dt.datetime]
+DshUsageRow = tuple[str, int, str, str, int, int, int, int, int]
 
 
 _CODEX_SESSION_USAGE_CACHE: dict[str, tuple[int, int, str, CodexContribution | None]] = {}
 _CLAUDE_REQUEST_RECORDS_CACHE: dict[str, tuple[int, int, list[ClaudeRequestRecord]]] = {}
 _CLAUDE_ATTRIBUTION_EVENTS_CACHE: dict[str, tuple[int, int, list[ClaudeAttributionEvent]]] = {}
 _PI_SESSION_RECORDS_CACHE: dict[str, tuple[int, int, dict[str, object]]] = {}
+_DSH_SESSION_RECORDS_CACHE: dict[str, tuple[int, int, dict[str, object]]] = {}
 _JSONL_FILE_INDEX_CACHE: dict[str, tuple[dict[str, int], tuple[str, ...]]] = {}
-_PERSISTENT_CACHE_VERSION = 4
+_PERSISTENT_CACHE_VERSION = 5
 _PERSISTENT_CACHE_LOADED_FROM: str | None = None
 _PERSISTENT_CACHE_DIRTY = False
 _PI_APPEND_FAST_PATH_WINDOW_BYTES = 4096
@@ -595,6 +599,7 @@ def load_persistent_parse_caches(cache_path: Path | None) -> None:
     _CLAUDE_REQUEST_RECORDS_CACHE.clear()
     _CLAUDE_ATTRIBUTION_EVENTS_CACHE.clear()
     _PI_SESSION_RECORDS_CACHE.clear()
+    _DSH_SESSION_RECORDS_CACHE.clear()
     _JSONL_FILE_INDEX_CACHE.clear()
     _PERSISTENT_CACHE_LOADED_FROM = target
     _PERSISTENT_CACHE_DIRTY = False
@@ -607,8 +612,10 @@ def load_persistent_parse_caches(cache_path: Path | None) -> None:
     except (OSError, json.JSONDecodeError):
         return
 
-    if not isinstance(payload, dict) or payload.get("version") != _PERSISTENT_CACHE_VERSION:
+    if not isinstance(payload, dict) or payload.get("version") not in {4, _PERSISTENT_CACHE_VERSION}:
         return
+    if payload.get("version") != _PERSISTENT_CACHE_VERSION:
+        _PERSISTENT_CACHE_DIRTY = True
 
     file_indexes_payload = payload.get("file_indexes")
     if isinstance(file_indexes_payload, dict):
@@ -741,6 +748,20 @@ def load_persistent_parse_caches(cache_path: Path | None) -> None:
             if legacy_rows:
                 _PERSISTENT_CACHE_DIRTY = True
 
+    dsh_payload = payload.get("dsh")
+    if isinstance(dsh_payload, dict):
+        for file_path, entry in dsh_payload.items():
+            if not isinstance(entry, dict):
+                continue
+            contribution = deserialize_dsh_contribution(entry.get("contribution"))
+            if contribution is None:
+                continue
+            _DSH_SESSION_RECORDS_CACHE[file_path] = (
+                safe_non_negative_int(entry.get("size")),
+                safe_non_negative_int(entry.get("mtime_ns")),
+                contribution,
+            )
+
 
 def save_persistent_parse_caches(cache_path: Path | None) -> None:
     global _PERSISTENT_CACHE_DIRTY
@@ -789,6 +810,14 @@ def save_persistent_parse_caches(cache_path: Path | None) -> None:
                 "contribution": serialize_pi_contribution(contribution),
             }
             for file_path, (size, mtime_ns, contribution) in _PI_SESSION_RECORDS_CACHE.items()
+        },
+        "dsh": {
+            file_path: {
+                "size": size,
+                "mtime_ns": mtime_ns,
+                "contribution": serialize_dsh_contribution(contribution),
+            }
+            for file_path, (size, mtime_ns, contribution) in _DSH_SESSION_RECORDS_CACHE.items()
         },
     }
 
@@ -2416,4 +2445,503 @@ def collect_pi_daily_totals(
     pricing_catalog: PricingCatalog | None = None,
 ) -> dict[dt.date, DailyTotals]:
     totals, _activity_totals = collect_pi_usage_data(pi_agent_root, pricing_catalog=pricing_catalog)
+    return totals
+
+
+class DshDecoderUnavailableError(RuntimeError):
+    """Raised when no local decoder can read DSH's Zstandard session logs."""
+
+
+class DshLogDecodeError(RuntimeError):
+    """Raised when one DSH session artifact cannot be decoded completely."""
+
+
+def _dsh_usage_row_from_object(row: object) -> DshUsageRow | None:
+    if isinstance(row, (list, tuple)) and len(row) == 9:
+        date_value, hour, provider, model, input_tokens, output_tokens, cache_read, cache_write, total_tokens = row
+    elif isinstance(row, dict):
+        date_value = row.get("date")
+        hour = row.get("hour")
+        provider = row.get("provider")
+        model = row.get("model")
+        input_tokens = row.get("input_tokens")
+        output_tokens = row.get("output_tokens")
+        cache_read = row.get("cache_read_tokens")
+        cache_write = row.get("cache_write_tokens")
+        total_tokens = row.get("total_tokens")
+    else:
+        return None
+    if not isinstance(date_value, str):
+        return None
+    try:
+        dt.date.fromisoformat(date_value)
+    except ValueError:
+        return None
+    normalized_hour = safe_non_negative_int(hour)
+    if normalized_hour > 23:
+        return None
+    normalized_input = safe_non_negative_int(input_tokens)
+    normalized_output = safe_non_negative_int(output_tokens)
+    normalized_cache_read = safe_non_negative_int(cache_read)
+    normalized_cache_write = safe_non_negative_int(cache_write)
+    normalized_total = safe_non_negative_int(total_tokens)
+    if normalized_total == 0:
+        normalized_total = normalized_input + normalized_output + normalized_cache_read + normalized_cache_write
+    return (
+        date_value,
+        normalized_hour,
+        normalized_bucket_value(provider, "unknown"),
+        normalized_bucket_value(model, DEFAULT_MODEL),
+        normalized_input,
+        normalized_output,
+        normalized_cache_read,
+        normalized_cache_write,
+        normalized_total,
+    )
+
+
+def serialize_dsh_contribution(contribution: object) -> dict[str, object] | None:
+    if not isinstance(contribution, dict):
+        return None
+    usage_rows = contribution.get("usage_rows")
+    if not isinstance(usage_rows, list):
+        return None
+    return {
+        "session_id": normalized_bucket_value(contribution.get("session_id"), "unknown-session"),
+        "usage_rows": [
+            list(normalized)
+            for row in usage_rows
+            if (normalized := _dsh_usage_row_from_object(row)) is not None
+        ],
+    }
+
+
+def deserialize_dsh_contribution(contribution: object) -> dict[str, object] | None:
+    serialized = serialize_dsh_contribution(contribution)
+    if serialized is None:
+        return None
+    serialized["usage_rows"] = [
+        normalized
+        for row in serialized["usage_rows"]
+        if (normalized := _dsh_usage_row_from_object(row)) is not None
+    ]
+    return serialized
+
+
+def empty_dsh_contribution(session_id: str) -> dict[str, object]:
+    return {
+        "session_id": normalized_bucket_value(session_id, "unknown-session"),
+        "usage_rows": [],
+    }
+
+
+def iter_dsh_session_files(sessions_root: Path):
+    pending = [os.fspath(sessions_root)]
+    while pending:
+        directory = pending.pop()
+        try:
+            with os.scandir(directory) as scanner:
+                entries = sorted(scanner, key=lambda entry: entry.name)
+        except OSError:
+            continue
+        child_directories: list[str] = []
+        for entry in entries:
+            try:
+                if entry.is_dir() and not entry.is_symlink():
+                    child_directories.append(entry.path)
+                elif entry.name in {"session.jsonl", "session.jsonl.zstd"}:
+                    yield entry.path
+            except OSError:
+                continue
+        pending.extend(reversed(child_directories))
+
+
+def _iter_dsh_zstd_subprocess_lines(file_path: Path):
+    configured_zstd = os.environ.get("AI_USAGE_ZSTD_BIN", "").strip()
+    zstd_binary = configured_zstd or shutil.which("zstd") or next(
+        (
+            candidate
+            for candidate in ("/opt/homebrew/bin/zstd", "/usr/local/bin/zstd")
+            if os.path.isfile(candidate) and os.access(candidate, os.X_OK)
+        ),
+        None,
+    )
+    if zstd_binary:
+        command = [zstd_binary, "-q", "-d", "-c", "--", os.fspath(file_path)]
+    else:
+        node_binary = shutil.which("node") or next(
+            (
+                candidate
+                for candidate in ("/opt/homebrew/bin/node", "/usr/local/bin/node")
+                if os.path.isfile(candidate) and os.access(candidate, os.X_OK)
+            ),
+            None,
+        )
+        if not node_binary:
+            raise DshDecoderUnavailableError(
+                "DeepSeek Harness session logs require Python 3.14+, zstd, or Node.js 22+"
+            )
+        script = (
+            "const fs=require('node:fs'),z=require('node:zlib');"
+            "const fail=()=>process.exit(1);"
+            "const input=fs.createReadStream(process.argv[1]);"
+            "const decoder=z.createZstdDecompress();"
+            "input.on('error',fail);decoder.on('error',fail);"
+            "input.pipe(decoder).pipe(process.stdout);"
+        )
+        command = [node_binary, "-e", script, os.fspath(file_path)]
+
+    try:
+        process = subprocess.Popen(
+            command,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            text=True,
+            encoding="utf-8",
+            errors="ignore",
+        )
+    except OSError as exc:
+        raise DshDecoderUnavailableError(f"cannot start the DSH session decoder: {command[0]}") from exc
+
+    try:
+        if process.stdout is None:
+            raise DshLogDecodeError(f"DSH decoder produced no output stream for {file_path}")
+        yield from process.stdout
+        process.stdout.close()
+        return_code = process.wait()
+        if return_code != 0:
+            raise DshLogDecodeError(f"cannot decode DeepSeek Harness session log: {file_path}")
+    finally:
+        if process.poll() is None:
+            process.terminate()
+            try:
+                process.wait(timeout=1)
+            except subprocess.TimeoutExpired:
+                process.kill()
+                process.wait()
+
+
+def iter_dsh_log_lines(file_path: Path):
+    if file_path.name.endswith(".jsonl"):
+        try:
+            with file_path.open("r", encoding="utf-8", errors="ignore") as handle:
+                yield from handle
+        except OSError as exc:
+            raise DshLogDecodeError(f"cannot read DeepSeek Harness session log: {file_path}") from exc
+        return
+
+    try:
+        from compression import zstd
+    except ImportError:
+        yield from _iter_dsh_zstd_subprocess_lines(file_path)
+        return
+
+    try:
+        with zstd.open(file_path, "rt", encoding="utf-8", errors="ignore") as handle:
+            yield from handle
+    except (OSError, EOFError, zstd.ZstdError) as exc:
+        raise DshLogDecodeError(f"cannot decode DeepSeek Harness session log: {file_path}") from exc
+
+
+def parse_epoch_milliseconds_local(value: object) -> dt.datetime | None:
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or value < 0:
+        return None
+    try:
+        return dt.datetime.fromtimestamp(float(value) / 1000.0, tz=dt.timezone.utc).astimezone()
+    except (OSError, OverflowError, ValueError):
+        return None
+
+
+def normalized_dsh_usage(usage: object) -> tuple[int, int, int, int, int] | None:
+    if not isinstance(usage, dict):
+        return None
+    input_tokens = safe_non_negative_int(usage.get("inputTokens"))
+    output_tokens = safe_non_negative_int(usage.get("outputTokens"))
+    cache_read_tokens = safe_non_negative_int(usage.get("cacheReadTokens"))
+    cache_write_tokens = safe_non_negative_int(usage.get("cacheWriteTokens"))
+    return (
+        input_tokens,
+        output_tokens,
+        cache_read_tokens,
+        cache_write_tokens,
+        input_tokens + output_tokens + cache_read_tokens + cache_write_tokens,
+    )
+
+
+def parse_dsh_session_contribution(file_path: Path) -> dict[str, object]:
+    session_id = file_path.parent.name or path_stem(file_path)
+    seed_length = 0
+    fallback_timestamp: dt.datetime | None = None
+    active_provider = "unknown"
+    active_model = DEFAULT_MODEL
+    samples: dict[tuple[object, ...], tuple[dt.datetime, str, str, tuple[int, int, int, int, int]]] = {}
+
+    def record_sample(
+        key: tuple[object, ...],
+        timestamp_value: object,
+        provider: object,
+        model: object,
+        usage: object,
+    ) -> None:
+        normalized = normalized_dsh_usage(usage)
+        if normalized is None:
+            return
+        timestamp = parse_epoch_milliseconds_local(timestamp_value)
+        if timestamp is None:
+            previous = samples.get(key)
+            timestamp = previous[0] if previous is not None else fallback_timestamp
+        if timestamp is None:
+            return
+        samples[key] = (
+            timestamp,
+            normalized_bucket_value(provider, "unknown"),
+            normalized_bucket_value(model, DEFAULT_MODEL),
+            normalized,
+        )
+
+    for line in iter_dsh_log_lines(file_path):
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            event = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(event, dict):
+            continue
+
+        event_type = event.get("type")
+        if event_type == "session":
+            session_id = normalized_bucket_value(event.get("id"), session_id)
+            seed_length = safe_non_negative_int(event.get("seedLength"))
+            created_at = parse_epoch_milliseconds_local(event.get("createdAt"))
+            if created_at is not None:
+                fallback_timestamp = created_at
+            continue
+
+        data = event.get("data")
+        if not isinstance(data, dict):
+            continue
+        sequence = event.get("seq")
+        inherited = isinstance(sequence, int) and sequence < seed_length
+
+        if event_type == "request/header":
+            header = data.get("header")
+            config = header.get("config") if isinstance(header, dict) else None
+            if isinstance(config, dict):
+                active_provider = normalized_bucket_value(config.get("provider"), active_provider)
+                active_model = normalized_bucket_value(config.get("model"), active_model)
+            continue
+
+        if event_type == "assistant/chunk":
+            if inherited:
+                continue
+            chunk = data.get("chunk")
+            if not isinstance(chunk, dict) or chunk.get("type") != "usage":
+                continue
+            turn = data.get("turn")
+            step = data.get("step")
+            key = ("step", turn, step) if isinstance(turn, int) and isinstance(step, int) else ("event", event.get("seq"))
+            record_sample(key, event.get("time"), active_provider, active_model, chunk.get("usage"))
+            continue
+
+        if event_type == "assistant/message" and not inherited and isinstance(data.get("usage"), dict):
+            turn = data.get("turn")
+            step = data.get("step")
+            key = ("step", turn, step) if isinstance(turn, int) and isinstance(step, int) else ("event", event.get("seq"))
+            record_sample(key, event.get("time"), active_provider, active_model, data.get("usage"))
+            continue
+
+        if event_type == "compaction/summary" and not inherited and isinstance(data.get("usage"), dict):
+            record_sample(
+                ("compaction", event.get("seq"), data.get("compactionId")),
+                event.get("time"),
+                data.get("provider"),
+                data.get("model"),
+                data.get("usage"),
+            )
+
+    buckets: dict[tuple[str, int, str, str], list[int]] = {}
+    for timestamp, provider, model, usage in samples.values():
+        input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, total_tokens = usage
+        if total_tokens == 0:
+            continue
+        key = (timestamp.date().isoformat(), timestamp.hour, provider, model)
+        bucket = buckets.setdefault(key, [0, 0, 0, 0, 0])
+        bucket[0] += input_tokens
+        bucket[1] += output_tokens
+        bucket[2] += cache_read_tokens
+        bucket[3] += cache_write_tokens
+        bucket[4] += total_tokens
+
+    return {
+        "session_id": normalized_bucket_value(session_id, path_stem(file_path)),
+        "usage_rows": [
+            (*key, *values)
+            for key, values in sorted(buckets.items())
+        ],
+    }
+
+
+def parse_dsh_session_contribution_cached(file_path) -> dict[str, object]:
+    path = file_path if isinstance(file_path, Path) else Path(file_path)
+    fallback = empty_dsh_contribution(path.parent.name or path_stem(path))
+    try:
+        stat = os.stat(path)
+    except OSError:
+        return fallback
+
+    cache_key = os.fspath(path)
+    cached = _DSH_SESSION_RECORDS_CACHE.get(cache_key)
+    signature = (stat.st_size, stat.st_mtime_ns)
+    if cached is not None and cached[:2] == signature:
+        return cached[2]
+
+    try:
+        contribution = parse_dsh_session_contribution(path)
+    except DshLogDecodeError:
+        return cached[2] if cached is not None else fallback
+    _DSH_SESSION_RECORDS_CACHE[cache_key] = (signature[0], signature[1], contribution)
+    _mark_persistent_cache_dirty()
+    return contribution
+
+
+def iter_observed_dsh_contributions(sessions_root: Path):
+    """Yield every observed DSH log contribution, even after its source file is deleted."""
+    live_paths: list[str] = []
+    for file_path in iter_dsh_session_files(sessions_root):
+        live_paths.append(os.fspath(file_path))
+        parse_dsh_session_contribution_cached(file_path)
+
+    entries = dict(_cache_entries_for_root(_DSH_SESSION_RECORDS_CACHE, sessions_root))
+    for cache_path in _ordered_observed_paths(live_paths, set(entries)):
+        contribution = entries[cache_path][2]
+        if isinstance(contribution, dict):
+            yield cache_path, contribution
+
+
+def collect_dsh_usage_data(
+    dsh_home: Path,
+    pricing_catalog: PricingCatalog | None = None,
+) -> tuple[dict[dt.date, DailyTotals], dict[tuple[dt.date, int], ActivityTotals]]:
+    totals: dict[dt.date, DailyTotals] = {}
+    activity_totals: dict[tuple[dt.date, int], ActivityTotals] = {}
+    catalog = pricing_catalog or PricingCatalog.from_file(None)
+    sessions_root = dsh_home / "sessions"
+    daily_sessions: dict[dt.date, set[str]] = {}
+    bucket_sessions: dict[tuple[dt.date, str, str], set[str]] = {}
+    activity_sessions: dict[tuple[dt.date, int], set[str]] = {}
+
+    for file_path, contribution in iter_observed_dsh_contributions(sessions_root):
+        session_id = normalized_bucket_value(contribution.get("session_id"), path_stem(file_path))
+        usage_rows = contribution.get("usage_rows")
+        if not isinstance(usage_rows, list):
+            continue
+        for raw_row in usage_rows:
+            row = _dsh_usage_row_from_object(raw_row)
+            if row is None:
+                continue
+            (
+                usage_date_value,
+                hour,
+                _route_provider,
+                model,
+                input_tokens,
+                output_tokens,
+                cache_read_tokens,
+                cache_write_tokens,
+                total_tokens,
+            ) = row
+            usage_date = dt.date.fromisoformat(usage_date_value)
+            cached_tokens = cache_read_tokens + cache_write_tokens
+            priced = catalog.price_usage(
+                "dsh",
+                model,
+                uncached_input_tokens=input_tokens,
+                output_tokens=output_tokens,
+                cache_read_tokens=cache_read_tokens,
+                cache_write_tokens=cache_write_tokens,
+            )
+            input_cost = cost_to_nanodollars(priced.input_cost_usd)
+            output_cost = cost_to_nanodollars(priced.output_cost_usd)
+            cached_cost = cost_to_nanodollars(priced.cached_cost_usd)
+            total_cost = cost_to_nanodollars(priced.total_cost_usd)
+
+            daily = totals.get(usage_date)
+            if daily is None:
+                daily = DailyTotals(date=usage_date)
+                daily.input_cost_usd = daily.output_cost_usd = 0
+                daily.cached_cost_usd = daily.total_cost_usd = 0
+                totals[usage_date] = daily
+            daily.input_tokens += input_tokens
+            daily.output_tokens += output_tokens
+            daily.cached_tokens += cached_tokens
+            daily.total_tokens += total_tokens
+            daily.input_cost_usd += input_cost
+            daily.output_cost_usd += output_cost
+            daily.cached_cost_usd += cached_cost
+            daily.total_cost_usd += total_cost
+            daily.cost_complete = daily.cost_complete and priced.cost_complete
+
+            agent_cli = "dsh"
+            breakdown_key = (agent_cli, model)
+            breakdown = daily.breakdowns.get(breakdown_key)
+            if breakdown is None:
+                breakdown = BreakdownTotals(agent_cli=agent_cli, model=model)
+                breakdown.input_cost_usd = breakdown.output_cost_usd = 0
+                breakdown.cached_cost_usd = breakdown.total_cost_usd = 0
+                daily.breakdowns[breakdown_key] = breakdown
+            breakdown.input_tokens += input_tokens
+            breakdown.output_tokens += output_tokens
+            breakdown.cached_tokens += cached_tokens
+            breakdown.total_tokens += total_tokens
+            breakdown.input_cost_usd += input_cost
+            breakdown.output_cost_usd += output_cost
+            breakdown.cached_cost_usd += cached_cost
+            breakdown.total_cost_usd += total_cost
+            breakdown.cost_complete = breakdown.cost_complete and priced.cost_complete
+
+            activity_key = (usage_date, hour)
+            activity = activity_totals.get(activity_key)
+            if activity is None:
+                activity = ActivityTotals(date=usage_date, hour=hour)
+                activity.input_cost_usd = activity.output_cost_usd = 0
+                activity.cached_cost_usd = activity.total_cost_usd = 0
+                activity_totals[activity_key] = activity
+            activity.input_tokens += input_tokens
+            activity.output_tokens += output_tokens
+            activity.cached_tokens += cached_tokens
+            activity.total_tokens += total_tokens
+            activity.input_cost_usd += input_cost
+            activity.output_cost_usd += output_cost
+            activity.cached_cost_usd += cached_cost
+            activity.total_cost_usd += total_cost
+            activity.cost_complete = activity.cost_complete and priced.cost_complete
+
+            daily_sessions.setdefault(usage_date, set()).add(session_id)
+            bucket_sessions.setdefault((usage_date, agent_cli, model), set()).add(session_id)
+            activity_sessions.setdefault(activity_key, set()).add(session_id)
+
+    for usage_date, sessions in daily_sessions.items():
+        totals[usage_date].sessions = len(sessions)
+    for (usage_date, agent_cli, model), sessions in bucket_sessions.items():
+        totals[usage_date].breakdowns[(agent_cli, model)].sessions = len(sessions)
+    for activity_key, sessions in activity_sessions.items():
+        activity_totals[activity_key].sessions = len(sessions)
+
+    for daily in totals.values():
+        _materialize_nanodollar_costs(daily)
+        for breakdown in daily.breakdowns.values():
+            _materialize_nanodollar_costs(breakdown)
+    for activity in activity_totals.values():
+        _materialize_nanodollar_costs(activity)
+
+    return totals, activity_totals
+
+
+def collect_dsh_daily_totals(
+    dsh_home: Path,
+    pricing_catalog: PricingCatalog | None = None,
+) -> dict[dt.date, DailyTotals]:
+    totals, _activity_totals = collect_dsh_usage_data(dsh_home, pricing_catalog=pricing_catalog)
     return totals

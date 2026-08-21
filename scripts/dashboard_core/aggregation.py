@@ -380,13 +380,20 @@ def summary_from_daily(daily: dict[dt.date, DailyTotals]) -> dict[str, int | flo
     return materialize_daily(daily).summary
 
 
-def providers_available(codex_source: object, claude_source: object, pi_source: object = False) -> dict[str, bool]:
+def providers_available(
+    codex_source: object,
+    claude_source: object,
+    pi_source: object = False,
+    dsh_source: object = False,
+) -> dict[str, bool]:
     codex_present = bool(codex_source)
     claude_present = bool(claude_source)
     pi_present = bool(pi_source)
+    dsh_present = bool(dsh_source)
     return {
         "codex": codex_present,
         "claude": claude_present,
         "pi": pi_present,
-        "combined": bool(codex_present or claude_present or pi_present),
+        "dsh": dsh_present,
+        "combined": bool(codex_present or claude_present or pi_present or dsh_present),
     }

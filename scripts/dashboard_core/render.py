@@ -321,8 +321,9 @@ def build_provider_options(dataset: dict) -> str:
         "codex": "Codex",
         "claude": "Claude",
         "pi": "PI",
+        "dsh": "DeepSeek Harness",
     }
-    present_providers = [key for key in ("codex", "claude", "pi") if provider_flags.get(key)]
+    present_providers = [key for key in ("codex", "claude", "pi", "dsh") if provider_flags.get(key)]
 
     option_lines = []
     if len(present_providers) > 1:

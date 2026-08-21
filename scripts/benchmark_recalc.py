@@ -61,8 +61,8 @@ REQUIRED_HTML_SNIPPETS = [
     'id="usageDataset"',
     'id="dailyUsageTableBody"',
     'id="usageBreakdownTableBody"',
-    'Total Cost',
-    'Input Cost',
+    'Cost Surface',
+    'Average Spend',
 ]
 
 
@@ -187,6 +187,7 @@ def build_fixture_root(root: Path) -> tuple[DashboardConfig, datetime]:
         sessions_root=codex_root,
         claude_projects_root=claude_root,
         pi_agent_root=pi_root,
+        dsh_home=root / "dsh-home",
     )
     fixed_now = datetime(2026, 3, 4, 15, 0, tzinfo=timezone.utc)
     return config, fixed_now
@@ -268,7 +269,7 @@ def validate_render(payload: dict, html: str, fixed_now: datetime) -> None:
     if dataset["generated_at"] != fixed_now.isoformat():
         raise AssertionError("Dataset generated_at timestamp is not deterministic")
 
-    expected_flags = {"codex": True, "claude": True, "pi": True, "combined": True}
+    expected_flags = {"codex": True, "claude": True, "pi": True, "dsh": False, "combined": True}
     if payload["providers_available"] != expected_flags:
         raise AssertionError(f"Unexpected providers_available: {payload['providers_available']}")
     if dataset["providers_available"] != expected_flags:

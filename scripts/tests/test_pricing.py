@@ -27,6 +27,22 @@ class PricingTests(unittest.TestCase):
         self.assertAlmostEqual(priced.cached_cost_usd, 0.00000625)
         self.assertAlmostEqual(priced.total_cost_usd, 0.00188125)
 
+    def test_dsh_pricing_reuses_known_model_family_rates(self) -> None:
+        catalog = PricingCatalog.from_file(None)
+
+        priced = catalog.price_usage(
+            "dsh",
+            "gpt-5.6-sol",
+            uncached_input_tokens=150,
+            output_tokens=100,
+            cache_read_tokens=25,
+        )
+
+        self.assertTrue(priced.cost_complete)
+        self.assertEqual(priced.source, "derived")
+        self.assertAlmostEqual(priced.total_cost_usd, 0.00188125)
+        self.assertEqual(catalog.warnings(), [])
+
     def test_claude_pricing_derives_cache_write_and_cache_read_rollup(self) -> None:
         catalog = PricingCatalog.from_file(None)
 

@@ -116,7 +116,7 @@ def available_providers(dataset_payload: dict[str, Any]) -> list[str]:
     provider_flags = dataset_payload.get("providers_available") or {}
     return [
         provider
-        for provider in ("codex", "claude", "pi")
+        for provider in ("codex", "claude", "pi", "dsh")
         if bool(provider_flags.get(provider))
     ]
 
@@ -195,7 +195,7 @@ def build_tmux_status_snapshot(
     today = generated_at.astimezone(local_reference.tzinfo).date() if local_reference.tzinfo else generated_at.astimezone().date()
 
     providers_payload = dataset_payload.get("providers") or {}
-    if scope not in {"combined", "codex", "claude", "pi"}:
+    if scope not in {"combined", "codex", "claude", "pi", "dsh"}:
         scope = "combined"
 
     provider_rows = providers_payload.get(scope) or {}

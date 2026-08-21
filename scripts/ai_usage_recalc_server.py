@@ -19,7 +19,12 @@ from dashboard_core.aggregation import (
     summary_from_daily,
     sum_range,
 )
-from dashboard_core.collectors import collect_claude_daily_totals, collect_codex_daily_totals, collect_pi_daily_totals
+from dashboard_core.collectors import (
+    collect_claude_daily_totals,
+    collect_codex_daily_totals,
+    collect_dsh_daily_totals,
+    collect_pi_daily_totals,
+)
 from dashboard_core.config import DashboardConfig
 from dashboard_core.models import DailyTotals
 from dashboard_core.pipeline import recalc_dashboard as recalc_dashboard_pipeline
@@ -32,6 +37,7 @@ DASHBOARD_HTML = CONFIG.dashboard_html
 SESSIONS_ROOT = CONFIG.sessions_root
 CLAUDE_PROJECTS_ROOT = CONFIG.claude_projects_root
 PI_AGENT_ROOT = CONFIG.pi_agent_root
+DSH_HOME = CONFIG.dsh_home
 PRICING_FILE = CONFIG.pricing_file
 RECALC_LOG_FILE = CONFIG.recalc_log_file
 
@@ -51,6 +57,10 @@ def _collect_claude_daily_totals(claude_projects_root: Path | None = None) -> di
 
 def _collect_pi_daily_totals(pi_agent_root: Path | None = None) -> dict[dt.date, DailyTotals]:
     return collect_pi_daily_totals(pi_agent_root or PI_AGENT_ROOT)
+
+
+def _collect_dsh_daily_totals(dsh_home: Path | None = None) -> dict[dt.date, DailyTotals]:
+    return collect_dsh_daily_totals(dsh_home or DSH_HOME)
 
 
 def _combine_daily_totals(*providers: dict[dt.date, DailyTotals]) -> dict[dt.date, DailyTotals]:
@@ -77,8 +87,13 @@ def _summary_from_daily(daily: dict[dt.date, DailyTotals]) -> dict[str, int]:
     return summary_from_daily(daily)
 
 
-def _providers_available(codex_source: object, claude_source: object, pi_source: object = False) -> dict[str, bool]:
-    return providers_available(codex_source, claude_source, pi_source)
+def _providers_available(
+    codex_source: object,
+    claude_source: object,
+    pi_source: object = False,
+    dsh_source: object = False,
+) -> dict[str, bool]:
+    return providers_available(codex_source, claude_source, pi_source, dsh_source)
 
 
 def recalc_dashboard() -> dict:
@@ -139,6 +154,7 @@ class Handler(BaseHTTPRequestHandler):
             "codex_collect",
             "claude_collect",
             "pi_collect",
+            "dsh_collect",
             "load_persistent_parse_caches",
             "save_persistent_parse_caches",
             "rewrite_dashboard_html",
@@ -178,12 +194,15 @@ class Handler(BaseHTTPRequestHandler):
                     "sessions_root": str(SESSIONS_ROOT),
                     "claude_projects_root": str(CLAUDE_PROJECTS_ROOT),
                     "pi_agent_root": str(PI_AGENT_ROOT),
+                    "dsh_home": str(DSH_HOME),
+                    "dsh_sessions_root": str(DSH_HOME / "sessions"),
                     "pricing_file": str(PRICING_FILE) if PRICING_FILE else None,
                     "recalc_log_file": str(RECALC_LOG_FILE) if RECALC_LOG_FILE else None,
                     "providers_available": providers_available(
                         SESSIONS_ROOT.exists(),
                         CLAUDE_PROJECTS_ROOT.exists(),
                         PI_AGENT_ROOT.exists(),
+                        (DSH_HOME / "sessions").exists(),
                     ),
                     "timestamp": dt.datetime.now(dt.timezone.utc).isoformat(),
                 }
@@ -199,8 +218,10 @@ class Handler(BaseHTTPRequestHandler):
                 codex_ms = float(timings.get("codex_collect") or 0.0)
                 claude_ms = float(timings.get("claude_collect") or 0.0)
                 pi_ms = float(timings.get("pi_collect") or 0.0)
+                dsh_ms = float(timings.get("dsh_collect") or 0.0)
                 print(
-                    f"[recalc] total={elapsed_ms:.3f}ms codex={codex_ms:.3f}ms claude={claude_ms:.3f}ms pi={pi_ms:.3f}ms"
+                    f"[recalc] total={elapsed_ms:.3f}ms codex={codex_ms:.3f}ms claude={claude_ms:.3f}ms "
+                    f"pi={pi_ms:.3f}ms dsh={dsh_ms:.3f}ms"
                 )
                 append_recalc_log(
                     {
@@ -244,7 +265,10 @@ class Handler(BaseHTTPRequestHandler):
 
 def main() -> None:
     httpd = ThreadingHTTPServer((HOST, PORT), Handler)
-    print(f"AI usage recalc service listening on http://{HOST}:{PORT} (supports Codex, Claude, and PI)")
+    print(
+        f"AI usage recalc service listening on http://{HOST}:{PORT} "
+        "(supports Codex, Claude, PI, and DeepSeek Harness)"
+    )
     httpd.serve_forever()
 
 

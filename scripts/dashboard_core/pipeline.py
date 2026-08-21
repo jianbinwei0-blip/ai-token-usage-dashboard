@@ -18,6 +18,7 @@ from .aggregation import (
 from .collectors import (
     collect_claude_usage_data,
     collect_codex_usage_data,
+    collect_dsh_usage_data,
     collect_pi_usage_data,
     load_persistent_parse_caches,
     persistent_parse_caches_dirty,
@@ -176,6 +177,7 @@ def recalc_dashboard(
         tuple[dict, dict],
         tuple[dict, dict],
         tuple[dict, dict],
+        tuple[dict, dict],
     ]:
         codex_result = measure(
             "codex_collect",
@@ -192,23 +194,38 @@ def recalc_dashboard(
             "pi_collect",
             lambda: collect_pi_usage_data(config.pi_agent_root, pricing_catalog=pricing_catalog),
         )
-        return codex_result, claude_result, pi_result
+        dsh_result = measure(
+            "dsh_collect",
+            lambda: collect_dsh_usage_data(config.dsh_home, pricing_catalog=pricing_catalog),
+        )
+        return codex_result, claude_result, pi_result, dsh_result
 
-    (codex_daily_all, codex_activity_all), (claude_daily_all, claude_activity_all), (pi_daily_all, pi_activity_all) = measure(
-        "provider_collect",
-        collect_provider_data,
-    )
+    (
+        (codex_daily_all, codex_activity_all),
+        (claude_daily_all, claude_activity_all),
+        (pi_daily_all, pi_activity_all),
+        (dsh_daily_all, dsh_activity_all),
+    ) = measure("provider_collect", collect_provider_data)
     provider_cache_changed = persistent_parse_caches_dirty()
     measure("save_persistent_parse_caches", lambda: save_persistent_parse_caches(config.parse_cache_file))
-    combined_daily_all = measure("combine_daily", lambda: combine_daily_totals(codex_daily_all, claude_daily_all, pi_daily_all))
+    combined_daily_all = measure(
+        "combine_daily",
+        lambda: combine_daily_totals(codex_daily_all, claude_daily_all, pi_daily_all, dsh_daily_all),
+    )
     combined_activity_all = measure(
         "combine_activity",
-        lambda: combine_activity_totals(codex_activity_all, claude_activity_all, pi_activity_all),
+        lambda: combine_activity_totals(
+            codex_activity_all,
+            claude_activity_all,
+            pi_activity_all,
+            dsh_activity_all,
+        ),
     )
 
     codex_all = measure("codex_materialize_all", lambda: materialize_daily(codex_daily_all))
     claude_all = measure("claude_materialize_all", lambda: materialize_daily(claude_daily_all))
     pi_all = measure("pi_materialize_all", lambda: materialize_daily(pi_daily_all))
+    dsh_all = measure("dsh_materialize_all", lambda: materialize_daily(dsh_daily_all))
     combined_all = measure("combined_materialize_all", lambda: materialize_daily(combined_daily_all))
 
     codex_ytd = measure(
@@ -235,6 +252,16 @@ def recalc_dashboard(
         "pi_materialize_ytd",
         lambda: materialize_daily(
             pi_daily_all,
+            ytd_from,
+            today,
+            include_rows=False,
+            include_ranked_values=False,
+        ),
+    )
+    dsh_ytd = measure(
+        "dsh_materialize_ytd",
+        lambda: materialize_daily(
+            dsh_daily_all,
             ytd_from,
             today,
             include_rows=False,
@@ -320,6 +347,7 @@ def recalc_dashboard(
         config.sessions_root.exists(),
         config.claude_projects_root.exists(),
         config.pi_agent_root.exists(),
+        (config.dsh_home / "sessions").exists(),
     )
     pricing_metadata = pricing_catalog.metadata()
 
@@ -331,6 +359,8 @@ def recalc_dashboard(
             "claude_projects_root": str(config.claude_projects_root),
             "pi_agent_root": str(config.pi_agent_root),
             "pi_sessions_root": str(config.pi_agent_root / "sessions"),
+            "dsh_home": str(config.dsh_home),
+            "dsh_sessions_root": str(config.dsh_home / "sessions"),
             "pricing_file": str(config.pricing_file) if config.pricing_file else None,
         },
         "providers_available": provider_flags,
@@ -347,6 +377,10 @@ def recalc_dashboard(
             "pi": {
                 "rows": pi_all.rows,
                 "activity_rows": activity_rows_from_totals(pi_activity_all),
+            },
+            "dsh": {
+                "rows": dsh_all.rows,
+                "activity_rows": activity_rows_from_totals(dsh_activity_all),
             },
             "combined": {
                 "rows": combined_all.rows,
@@ -399,6 +433,7 @@ def recalc_dashboard(
             "codex_sessions_root": str(config.sessions_root),
             "claude_projects_root": str(config.claude_projects_root),
             "pi_agent_root": str(config.pi_agent_root),
+            "dsh_home": str(config.dsh_home),
             "pricing_file": str(config.pricing_file) if config.pricing_file else None,
         },
         "providers_available": provider_flags,
@@ -407,6 +442,7 @@ def recalc_dashboard(
             "codex": codex_ytd.summary,
             "claude": claude_ytd.summary,
             "pi": pi_ytd.summary,
+            "dsh": dsh_ytd.summary,
             "combined": combined_ytd.summary,
         },
     }

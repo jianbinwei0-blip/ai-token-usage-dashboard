@@ -1,7 +1,7 @@
 import json
 import tempfile
 import unittest
-from datetime import date, datetime
+from datetime import date, datetime, timezone
 from pathlib import Path
 import sys
 
@@ -10,6 +10,7 @@ import ai_usage_recalc_server as server
 from dashboard_core.collectors import (
     collect_claude_usage_data,
     collect_codex_usage_data,
+    collect_dsh_usage_data,
     collect_pi_usage_data,
     load_persistent_parse_caches,
     save_persistent_parse_caches,
@@ -540,6 +541,257 @@ class UsageAggregationTests(unittest.TestCase):
             self.assertAlmostEqual(totals[expected_day].total_cost_usd, 0.017325)
             self.assertTrue(totals[expected_day].cost_complete)
 
+    def test_collect_dsh_usage_data_dedupes_step_samples_and_tracks_compaction_usage(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            dsh_home = root / "dsh-home"
+            session_file = dsh_home / "sessions" / "--project--" / "session-a" / "session.jsonl"
+            base = datetime.fromisoformat("2026-03-09T10:00:00+00:00")
+            at = lambda minutes: int((base.timestamp() + minutes * 60) * 1000)
+            self._write_jsonl(
+                session_file,
+                [
+                    {
+                        "type": "session",
+                        "version": 0,
+                        "id": "dsh-session-a",
+                        "createdAt": at(0),
+                    },
+                    {
+                        "type": "request/header",
+                        "seq": 0,
+                        "time": at(0),
+                        "data": {
+                            "header": {
+                                "config": {
+                                    "provider": "deepseek-official",
+                                    "model": "deepseek-v4-flash",
+                                }
+                            },
+                            "reason": "initial",
+                        },
+                    },
+                    {
+                        "type": "assistant/chunk",
+                        "seq": 1,
+                        "time": at(1),
+                        "data": {
+                            "turn": 1,
+                            "step": 1,
+                            "chunk": {
+                                "type": "usage",
+                                "usage": {
+                                    "inputTokens": 10,
+                                    "outputTokens": 4,
+                                    "cacheReadTokens": 3,
+                                    "cacheWriteTokens": 2,
+                                },
+                            },
+                        },
+                    },
+                    {
+                        "type": "assistant/message",
+                        "seq": 2,
+                        "time": at(2),
+                        "data": {
+                            "turn": 1,
+                            "step": 1,
+                            "message": {"role": "assistant", "content": []},
+                            "usage": {
+                                "inputTokens": 10,
+                                "outputTokens": 5,
+                                "cacheReadTokens": 3,
+                                "cacheWriteTokens": 2,
+                            },
+                        },
+                    },
+                    {
+                        "type": "assistant/chunk",
+                        "seq": 3,
+                        "time": at(3),
+                        "data": {
+                            "turn": 1,
+                            "step": 2,
+                            "chunk": {
+                                "type": "usage",
+                                "usage": {"inputTokens": 2, "outputTokens": 1},
+                            },
+                        },
+                    },
+                    {
+                        "type": "request/header",
+                        "seq": 4,
+                        "time": at(4),
+                        "data": {
+                            "header": {
+                                "config": {
+                                    "provider": "openai-codex",
+                                    "model": "gpt-5.6-sol",
+                                }
+                            },
+                            "reason": "change",
+                        },
+                    },
+                    {
+                        "type": "assistant/message",
+                        "seq": 5,
+                        "time": at(5),
+                        "data": {
+                            "turn": 1,
+                            "step": 3,
+                            "message": {"role": "assistant", "content": []},
+                            "usage": {
+                                "inputTokens": 20,
+                                "outputTokens": 2,
+                                "cacheReadTokens": 5,
+                                "cacheWriteTokens": 1,
+                            },
+                        },
+                    },
+                    {
+                        "type": "compaction/summary",
+                        "seq": 6,
+                        "time": at(65),
+                        "data": {
+                            "compactionId": "compact-1",
+                            "provider": "openai-codex",
+                            "model": "gpt-5.6-sol",
+                            "usage": {
+                                "inputTokens": 7,
+                                "outputTokens": 3,
+                                "cacheReadTokens": 1,
+                            },
+                        },
+                    },
+                ],
+            )
+
+            totals, activity = collect_dsh_usage_data(dsh_home)
+            usage_day = base.astimezone().date()
+            first_hour = base.astimezone().hour
+            compaction_hour = datetime.fromtimestamp(at(65) / 1000, tz=base.tzinfo).astimezone().hour
+
+            self.assertEqual(totals[usage_day].sessions, 1)
+            self.assertEqual(totals[usage_day].input_tokens, 39)
+            self.assertEqual(totals[usage_day].output_tokens, 11)
+            self.assertEqual(totals[usage_day].cached_tokens, 12)
+            self.assertEqual(totals[usage_day].total_tokens, 62)
+            self.assertFalse(totals[usage_day].cost_complete)
+
+            deepseek = totals[usage_day].breakdowns[("dsh", "deepseek-v4-flash")]
+            self.assertEqual(deepseek.sessions, 1)
+            self.assertEqual(deepseek.total_tokens, 23)
+            self.assertFalse(deepseek.cost_complete)
+
+            gpt = totals[usage_day].breakdowns[("dsh", "gpt-5.6-sol")]
+            self.assertEqual(gpt.sessions, 1)
+            self.assertEqual(gpt.input_tokens, 27)
+            self.assertEqual(gpt.output_tokens, 5)
+            self.assertEqual(gpt.cached_tokens, 7)
+            self.assertEqual(gpt.total_tokens, 39)
+            self.assertTrue(gpt.cost_complete)
+            self.assertEqual(activity[(usage_day, first_hour)].sessions, 1)
+            self.assertEqual(activity[(usage_day, compaction_hour)].sessions, 1)
+
+    def test_collect_dsh_usage_data_excludes_inherited_seed_usage(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            dsh_home = root / "dsh-home"
+            session_file = dsh_home / "sessions" / "--project--" / "forked-session" / "session.jsonl"
+            timestamp = int(datetime.fromisoformat("2026-03-10T11:00:00+00:00").timestamp() * 1000)
+            self._write_jsonl(
+                session_file,
+                [
+                    {
+                        "type": "session",
+                        "version": 0,
+                        "id": "forked-session",
+                        "createdAt": timestamp,
+                        "parentSession": "parent-session",
+                        "seedLength": 2,
+                    },
+                    {
+                        "type": "request/header",
+                        "seq": 0,
+                        "time": timestamp,
+                        "data": {
+                            "header": {"config": {"provider": "openai-codex", "model": "gpt-5.6-sol"}},
+                            "reason": "initial",
+                        },
+                    },
+                    {
+                        "type": "assistant/message",
+                        "seq": 1,
+                        "time": timestamp,
+                        "data": {
+                            "turn": 1,
+                            "step": 1,
+                            "message": {"role": "assistant", "content": []},
+                            "usage": {"inputTokens": 1_000, "outputTokens": 100},
+                        },
+                    },
+                    {
+                        "type": "assistant/message",
+                        "seq": 2,
+                        "time": timestamp,
+                        "data": {
+                            "turn": 2,
+                            "step": 1,
+                            "message": {"role": "assistant", "content": []},
+                            "usage": {"inputTokens": 8, "outputTokens": 2},
+                        },
+                    },
+                ],
+            )
+
+            totals, _activity = collect_dsh_usage_data(dsh_home)
+            usage_day = datetime.fromtimestamp(timestamp / 1000, tz=timezone.utc).astimezone().date()
+            self.assertEqual(totals[usage_day].total_tokens, 10)
+            self.assertEqual(totals[usage_day].sessions, 1)
+
+    def test_collect_dsh_usage_data_reads_zstandard_session_logs_when_supported(self) -> None:
+        try:
+            from compression import zstd
+        except ImportError:
+            self.skipTest("compression.zstd is unavailable")
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            dsh_home = root / "dsh-home"
+            session_file = dsh_home / "sessions" / "--project--" / "session-zstd" / "session.jsonl.zstd"
+            session_file.parent.mkdir(parents=True, exist_ok=True)
+            timestamp = int(datetime.fromisoformat("2026-03-10T12:00:00+00:00").timestamp() * 1000)
+            rows = [
+                {"type": "session", "version": 0, "id": "dsh-zstd", "createdAt": timestamp},
+                {
+                    "type": "request/header",
+                    "seq": 0,
+                    "time": timestamp,
+                    "data": {
+                        "header": {"config": {"provider": "openai-codex", "model": "gpt-5.6-sol"}},
+                        "reason": "initial",
+                    },
+                },
+                {
+                    "type": "assistant/message",
+                    "seq": 1,
+                    "time": timestamp,
+                    "data": {
+                        "turn": 1,
+                        "step": 1,
+                        "message": {"role": "assistant", "content": []},
+                        "usage": {"inputTokens": 8, "outputTokens": 2, "cacheReadTokens": 4},
+                    },
+                },
+            ]
+            raw = "".join(json.dumps(row) + "\n" for row in rows).encode()
+            session_file.write_bytes(zstd.compress(raw))
+
+            totals, _activity = collect_dsh_usage_data(dsh_home)
+            usage_day = datetime.fromtimestamp(timestamp / 1000, tz=timezone.utc).astimezone().date()
+            self.assertEqual(totals[usage_day].total_tokens, 14)
+            self.assertEqual(totals[usage_day].sessions, 1)
+
     def test_deleted_session_logs_remain_in_persistent_usage_history(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
@@ -547,6 +799,7 @@ class UsageAggregationTests(unittest.TestCase):
             codex_root = root / "codex"
             claude_root = root / "claude"
             pi_root = root / "pi"
+            dsh_home = root / "dsh-home"
 
             codex_session = codex_root / "2026" / "03" / "08" / "session.jsonl"
             self._write_jsonl(
@@ -625,24 +878,57 @@ class UsageAggregationTests(unittest.TestCase):
                 ],
             )
 
+            dsh_timestamp = int(datetime.fromisoformat("2026-03-08T12:15:00+00:00").timestamp() * 1000)
+            dsh_session = dsh_home / "sessions" / "project" / "dsh-history" / "session.jsonl"
+            self._write_jsonl(
+                dsh_session,
+                [
+                    {"type": "session", "version": 0, "id": "dsh-history", "createdAt": dsh_timestamp},
+                    {
+                        "type": "request/header",
+                        "seq": 0,
+                        "time": dsh_timestamp,
+                        "data": {
+                            "header": {"config": {"provider": "openai-codex", "model": "gpt-5.4"}},
+                            "reason": "initial",
+                        },
+                    },
+                    {
+                        "type": "assistant/message",
+                        "seq": 1,
+                        "time": dsh_timestamp,
+                        "data": {
+                            "turn": 1,
+                            "step": 1,
+                            "message": {"role": "assistant", "content": []},
+                            "usage": {"inputTokens": 30, "outputTokens": 10, "cacheReadTokens": 5},
+                        },
+                    },
+                ],
+            )
+
             load_persistent_parse_caches(cache_file)
             before = (
                 collect_codex_usage_data(codex_root),
                 collect_claude_usage_data(claude_root),
                 collect_pi_usage_data(pi_root),
+                collect_dsh_usage_data(dsh_home),
             )
             self.assertEqual(sum(day.sessions for day in before[0][0].values()), 2)
             self.assertEqual(sum(day.total_tokens for day in before[0][0].values()), 260)
+            self.assertEqual(sum(day.total_tokens for day in before[3][0].values()), 45)
             save_persistent_parse_caches(cache_file)
 
             codex_session.unlink()
             codex_duplicate.unlink()
             claude_session.unlink()
             pi_session.unlink()
+            dsh_session.unlink()
             after_deletion = (
                 collect_codex_usage_data(codex_root),
                 collect_claude_usage_data(claude_root),
                 collect_pi_usage_data(pi_root),
+                collect_dsh_usage_data(dsh_home),
             )
             self.assertEqual(after_deletion, before)
             save_persistent_parse_caches(cache_file)
@@ -653,6 +939,7 @@ class UsageAggregationTests(unittest.TestCase):
                 collect_codex_usage_data(codex_root),
                 collect_claude_usage_data(claude_root),
                 collect_pi_usage_data(pi_root),
+                collect_dsh_usage_data(dsh_home),
             )
             self.assertEqual(after_restart, before)
 

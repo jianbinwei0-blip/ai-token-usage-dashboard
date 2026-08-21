@@ -1,7 +1,7 @@
 # AI Token Usage Dashboard
 
 A local HTML dashboard for multi-provider AI token usage that auto-recalculates on refresh from local session data.
-Supports Codex, Claude, and PI Coding Agent.
+Supports Codex, Claude, PI Coding Agent, and DeepSeek Harness.
 
 ## Dashboard Screenshot
 
@@ -9,7 +9,7 @@ Supports Codex, Claude, and PI Coding Agent.
 
 ## Features
 
-- Provider toggle filtered to providers present on the system (`Combined`, `Codex`, `Claude`, `PI`)
+- Provider toggle filtered to providers present on the system (`Combined`, `Codex`, `Claude`, `PI`, `DeepSeek Harness`)
 - Range-aware stats cards for total, days, sessions, highest day, explicit input/output/total token totals, and cost totals
 - Today + calendar-week rollups
 - Activity Rhythm heatmap + time-of-day summary for the selected provider and date range
@@ -25,7 +25,7 @@ Supports Codex, Claude, and PI Coding Agent.
 - `scripts/ai_usage_recalc_server.py`: Thin local HTTP recalc service (`/health`, `/recalc`)
 - `scripts/dashboard_core/config.py`: Runtime config/env resolution
 - `scripts/dashboard_core/chatgpt_subscription.py`: Credential-safe Codex app-server adapter for ChatGPT plan and quota data
-- `scripts/dashboard_core/collectors.py`: Codex/Claude/PI usage ingestion
+- `scripts/dashboard_core/collectors.py`: Codex/Claude/PI/DeepSeek Harness usage ingestion
 - `scripts/dashboard_core/aggregation.py`: Daily aggregation + date window logic
 - `scripts/dashboard_core/render.py`: HTML rewrite + dataset injection
 - `scripts/dashboard_core/pipeline.py`: End-to-end recalc orchestration
@@ -45,6 +45,8 @@ Supports Codex, Claude, and PI Coding Agent.
 - Codex CLI signed in with ChatGPT for subscription quota display (optional; token and cost status still works without it)
 - Local Claude project logs in `~/.claude/projects` (optional; dashboard still works without Claude data)
 - Local PI agent state in `~/.pi/agent` (optional; dashboard still works without PI data)
+- Local DeepSeek Harness state in `~/.dsh` (optional; dashboard still works without DSH data)
+- For compressed DSH logs: Python 3.14+ with `compression.zstd`, a `zstd` executable, or Node.js 22+ (a normal DSH installation already requires Node.js)
 
 ## Quick Start
 
@@ -76,6 +78,8 @@ Environment variables:
 - `AI_USAGE_CODEX_SESSIONS_ROOT` (default: `~/.codex/sessions`)
 - `AI_USAGE_CLAUDE_PROJECTS_ROOT` (default: `~/.claude/projects`)
 - `AI_USAGE_PI_AGENT_ROOT` (default: `~/.pi/agent`)
+- `AI_USAGE_DSH_HOME` (default: `~/.dsh`; sessions are read from its `sessions` directory)
+- `AI_USAGE_ZSTD_BIN` (optional path to a `zstd` executable used when Python lacks `compression.zstd`; common Homebrew paths and Node.js are automatic fallbacks)
 - `AI_USAGE_DASHBOARD_HTML` (default via `scripts/run_local.sh`: `<repo>/tmp/index.runtime.html`, seeded from `<repo>/dashboard/index.html`)
 - `AI_USAGE_PRICING_FILE` (optional JSON rate-card override file merged over the built-in pricing table)
 - `AI_USAGE_PARSE_CACHE_FILE` (persistent observed-session history and parse cache; default: `<repo>/tmp/recalc_parse_cache.json`)
@@ -99,7 +103,7 @@ Where:
 - `5h` and `7d` are the primary and weekly Codex quota windows, expressed as percent remaining
 - a fully reset, inactive five-hour window remains visible as `5h 100% ↻now` when the Codex endpoint temporarily omits it; an active value is never replaced with this fallback
 - `↻` shows each quota's reset in local time; the complete five-hour quota/reset segment is prioritized at every usable width, and both active reset times remain visible in the normal 96-character presentation
-- `Today` and `MTD` are total tokens; input/output details are intentionally omitted
+- `Today` and `MTD` are total tokens across the selected local scope; the default `combined` scope includes Codex, Claude, PI, and DeepSeek Harness, while input/output details are intentionally omitted
 - the amount after the MTD token total is the locally derived month-to-date cost estimate, not an additional ChatGPT subscription charge
 - middle dots consistently separate plan, quota, token, and cost values
 - healthy status text is omitted; `partial`, `stale`, or `error` appears only when attention is needed
@@ -134,6 +138,12 @@ Disable ChatGPT account lookups while retaining total tokens and MTD cost:
 python3 scripts/render_tmux_status.py --chatgpt-usage off --max-width 96
 ```
 
+Show only native DeepSeek Harness usage:
+
+```bash
+python3 scripts/render_tmux_status.py --scope dsh --chatgpt-usage off --max-width 96
+```
+
 ## Optional: Run as LaunchAgent (macOS)
 
 1. Copy and edit the template:
@@ -160,15 +170,16 @@ curl http://127.0.0.1:8765/health
 
 ## Notes
 
-- The dashboard is designed for local use and reads local AI provider session logs from Codex, Claude, and PI when present.
+- The dashboard is designed for local use and reads local session logs from Codex, Claude, PI, and DeepSeek Harness when present.
 - Daily rows in the injected dataset include `sessions`, `input_tokens`, `output_tokens`, `cached_tokens`, `total_tokens`, `input_cost_usd`, `output_cost_usd`, `cached_cost_usd`, `total_cost_usd`, `cost_complete`, and `breakdown_rows` grouped by `(agent_cli, model)`.
-- A built-in versioned pricing table is used for derived Codex and Claude costs, and can be overridden via `AI_USAGE_PRICING_FILE`.
+- A built-in versioned pricing table is used for derived costs and can be overridden via `AI_USAGE_PRICING_FILE`. DSH first checks a `dsh` rate-card entry, then reuses known PI, Claude, or Codex model-family rates; an unmapped DSH model is reported as partial cost rather than trusted zero.
 - Codex usage keeps the latest `token_count` snapshot per session, extracts `originator`/`source` for the CLI bucket, uses the latest observed `turn_context.payload.model` when present, and prices uncached input separately from cached tokens.
 - ChatGPT subscription status is fetched through the Codex app server, and only normalized plan/quota/reset/credit metadata is cached. Email addresses, account IDs, and OAuth tokens are neither returned nor persisted by the dashboard.
 - Claude request usage is deduplicated by `(sessionId, requestId)`, keeps the highest observed token values for the request, computes `cached_tokens = cache_creation_input_tokens + cache_read_input_tokens`, and derives cost from the model rate card.
 - Claude-style context attribution is extracted when transcript events expose it: Skills from `<command-message>` slash commands, Agents/Subagents from `Agent`/`Task` tool calls, MCP servers from `mcp__server__method` tools, Tools from `tool_use` blocks, and Plugins / Extensions from namespaced slash commands plus plugin/extension metadata or tool namespaces. Attribution token/cost shares are estimated from the session totals for matching transcript events.
 - PI usage is read from `~/.pi/agent/sessions/**/*.jsonl`, tracks the active model via `model_change` events, computes `cached_tokens = cacheRead + cacheWrite`, prefers native `message.usage.cost.*` when present, and resumes parsing from the last verified byte offset when a session log grows append-only.
-- Once a Codex, Claude, or PI session has been observed, its last recorded usage remains in the persistent parse history if the source session log is later deleted. To reset history that no longer has a source log, stop the service, delete `AI_USAGE_PARSE_CACHE_FILE`, and restart; sessions deleted before the dashboard first observed them cannot be recovered.
+- DeepSeek Harness usage is read from `$DSH_HOME/sessions/**/session.jsonl.zstd` or uncompressed `session.jsonl`. The collector excludes inherited fork seed prefixes, follows `request/header` provider/model changes, uses the final provider-reported usage per `(turn, step)` without double-counting its earlier usage chunk, retains usage-only interrupted steps, includes persisted `compaction/summary` model calls, and computes `cached_tokens = cacheReadTokens + cacheWriteTokens`. Only calls whose provider usage is persisted can be counted; current DSH title-generation records describe the request but do not persist its usage result.
+- Once a Codex, Claude, PI, or DSH session has been observed, its last recorded usage remains in the persistent parse history if the source session log is later deleted. To reset history that no longer has a source log, stop the service, delete `AI_USAGE_PARSE_CACHE_FILE`, and restart; sessions deleted before the dashboard first observed them cannot be recovered.
 - Unmapped provider/model pricing is surfaced as partial cost in the API/UI instead of silently treated as trusted zero cost.
 - `/recalc` responses expose `Server-Timing` headers and `timings_ms` in the JSON payload, and the dashboard hero shows the latest refresh timing summary for quick diagnosis.
 - No third-party services are required.

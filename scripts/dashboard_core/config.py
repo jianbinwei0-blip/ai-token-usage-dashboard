@@ -13,6 +13,7 @@ class DashboardConfig:
     sessions_root: Path
     claude_projects_root: Path
     pi_agent_root: Path
+    dsh_home: Path
     pricing_file: Path | None = None
     parse_cache_file: Path | None = None
     recalc_log_file: Path | None = None
@@ -47,6 +48,12 @@ class DashboardConfig:
                 os.environ.get(
                     "AI_USAGE_PI_AGENT_ROOT",
                     str(Path.home() / ".pi" / "agent"),
+                )
+            ),
+            dsh_home=Path(
+                os.environ.get(
+                    "AI_USAGE_DSH_HOME",
+                    str(Path.home() / ".dsh"),
                 )
             ),
             pricing_file=Path(pricing_file_value) if pricing_file_value else None,

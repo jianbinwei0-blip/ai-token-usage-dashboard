@@ -56,7 +56,10 @@ class RuntimeHtmlTests(unittest.TestCase):
         self.assertIn('id="heroPricingSummary"', html)
         self.assertIn('id="heroGeneratedSummary"', html)
         self.assertIn('id="heroTimezoneSummary"', html)
-        self.assertIn('Sources: ~/.codex/sessions + ~/.claude/projects + ~/.pi/agent/sessions', html)
+        self.assertIn(
+            'Sources: ~/.codex/sessions + ~/.claude/projects + ~/.pi/agent/sessions + ~/.dsh/sessions',
+            html,
+        )
         self.assertRegex(
             html,
             r"\.meta-row--refresh \.chip \{\s*flex: 0 0 auto;\s*max-width: none;\s*white-space: nowrap;\s*overflow: visible;\s*text-overflow: clip;",
@@ -84,6 +87,10 @@ class RuntimeHtmlTests(unittest.TestCase):
         self.assertIn('>Cached</th>', html)
         self.assertIn('>Total Cost</th>', html)
         self.assertIn('const pricingMetadata = usageDataset?.pricing || {};', html)
+        self.assertIn('dsh: "DeepSeek Harness"', html)
+        self.assertIn('const dshRows = normalizeRows(providerData?.dsh?.rows);', html)
+        self.assertIn('const dshActivityRows = normalizeActivityRows(providerData?.dsh?.activity_rows);', html)
+        self.assertIn('usageDataset?.paths?.dsh_sessions_root, "~/.dsh/sessions"', html)
         self.assertIn('const lastRecalcTimingStorageKey = "aiTokenDashboardLastRecalcTiming";', html)
         self.assertIn('const formatRecalcTiming = (raw) => {', html)
         self.assertIn('const renderLastRecalcTiming = () => {', html)
@@ -105,6 +112,7 @@ class RuntimeHtmlTests(unittest.TestCase):
         self.assertIn('value="output-cost-desc">Output Cost (High to Low)</option>', html)
         self.assertIn('value="cached-cost-desc">Cached Cost (High to Low)</option>', html)
         self.assertNotIn("Xbox 360 calm, Her-era warmth, and liquid-glass instrumentation for Codex, Claude, and PI.", html)
+        self.assertIn("Codex, Claude, PI, and DeepSeek Harness when present", html)
         self.assertIn('usage-chart-control-group--action', html)
         self.assertIn('<div class="label">Today</div>', html)
         self.assertNotIn("Total Sessions", html)

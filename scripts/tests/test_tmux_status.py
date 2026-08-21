@@ -43,6 +43,9 @@ class TmuxStatusTests(unittest.TestCase):
             self.assertEqual(args.chatgpt_usage, "auto")
             self.assertEqual(args.codex_bin, "codex")
 
+        with mock.patch.object(sys, "argv", ["render_tmux_status.py", "--scope", "dsh"]):
+            self.assertEqual(parse_tmux_status_args().scope, "dsh")
+
         dataset_payload = {
             "generated_at": "2026-04-21T15:04:00+00:00",
             "providers_available": {"codex": True, "claude": False, "pi": False, "combined": True},
@@ -74,7 +77,7 @@ class TmuxStatusTests(unittest.TestCase):
     def test_build_snapshot_for_combined_wtd(self) -> None:
         dataset_payload = {
             "generated_at": "2026-04-21T15:04:00+00:00",
-            "providers_available": {"codex": True, "claude": True, "pi": True, "combined": True},
+            "providers_available": {"codex": True, "claude": True, "pi": True, "dsh": True, "combined": True},
             "pricing": {
                 "source": "built-in",
                 "version": "2026-03-08",
@@ -138,7 +141,7 @@ class TmuxStatusTests(unittest.TestCase):
         )
 
         self.assertEqual(snapshot["health"], "partial")
-        self.assertEqual(snapshot["providers"], ["codex", "claude", "pi"])
+        self.assertEqual(snapshot["providers"], ["codex", "claude", "pi", "dsh"])
         self.assertEqual(snapshot["range"]["preset"], "wtd")
         self.assertEqual(snapshot["version"], 3)
         self.assertEqual(snapshot["metrics"]["today_tokens"], 90_189_559)
@@ -251,6 +254,29 @@ class TmuxStatusTests(unittest.TestCase):
         self.assertIn("#[fg=#79C0FF]15:05#[default]", styled)
         unavailable = render_tmux_status({"providers": []}, use_tmux_style=True)
         self.assertIn("unavailable", unavailable)
+
+    def test_render_dsh_scope_uses_local_dsh_metrics_without_chatgpt_subscription(self) -> None:
+        now = dt.datetime(2026, 4, 21, 15, 5, tzinfo=dt.timezone.utc)
+        snapshot = {
+            "generated_at": "2026-04-21T15:04:00+00:00",
+            "health": "ok",
+            "scope": "dsh",
+            "providers": ["dsh"],
+            "range": {"preset": "mtd"},
+            "metrics": {"today_tokens": 123_000, "range_tokens": 456_000, "range_cost_usd": 7},
+            "quality": {"pricing_complete": True},
+            "subscription": {
+                "state": "ok",
+                "fetched_at": "2026-04-21T15:04:00+00:00",
+                "account_type": "chatgpt",
+                "plan": "pro",
+                "limits": [],
+            },
+        }
+
+        output = render_tmux_status(snapshot, now=now)
+        self.assertEqual(output, "AI dsh · Today 123K · MTD 456K · $7 · 15:04 → 15:05")
+        self.assertNotIn("GPT", output)
 
     def test_render_chatgpt_quota_with_total_tokens_and_mtd_cost(self) -> None:
         now = dt.datetime(2026, 4, 21, 15, 5, tzinfo=dt.timezone.utc)
