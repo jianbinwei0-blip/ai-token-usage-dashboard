@@ -36,6 +36,29 @@ class TmuxStatusTests(unittest.TestCase):
         self.assertEqual(format_recalc_short(68.4), "68ms")
         self.assertEqual(format_recalc_short(1_240), "1.2s")
 
+    def test_quota_reset_formatter_shows_remaining_days_hours_and_minutes(self) -> None:
+        now = dt.datetime(2026, 4, 21, 15, 5, tzinfo=dt.timezone.utc)
+
+        def reset_at(**delta: int) -> int:
+            return int((now + dt.timedelta(**delta)).timestamp())
+
+        self.assertEqual(
+            format_quota_reset_time(reset_at(days=2, hours=3, minutes=4, seconds=59), now=now),
+            "2d 3h 4m",
+        )
+        self.assertEqual(format_quota_reset_time(reset_at(days=2), now=now), "2d")
+        self.assertEqual(format_quota_reset_time(reset_at(hours=3), now=now), "3h")
+        self.assertEqual(format_quota_reset_time(reset_at(minutes=4), now=now), "4m")
+        self.assertEqual(format_quota_reset_time(reset_at(seconds=59), now=now), "now")
+        self.assertEqual(format_quota_reset_time(reset_at(seconds=-1), now=now), "now")
+        self.assertEqual(format_quota_reset_time(None, now=now), "")
+        self.assertEqual(format_quota_reset_time(0, now=now), "")
+        self.assertEqual(format_quota_reset_time("invalid", now=now), "")
+        self.assertEqual(
+            format_quota_reset_time(reset_at(days=2, hours=3), now=now, compact=True),
+            "2d 3h",
+        )
+
     def test_default_status_range_is_month_to_date(self) -> None:
         with mock.patch.object(sys, "argv", ["render_tmux_status.py"]):
             args = parse_tmux_status_args()
@@ -323,24 +346,24 @@ class TmuxStatusTests(unittest.TestCase):
         }
 
         self.assertEqual(format_chatgpt_plan("prolite"), "Pro Lite")
-        self.assertEqual(format_quota_reset_time(primary_reset, now=now), "18:00")
-        self.assertEqual(format_quota_reset_time(weekly_reset, now=now), "Fri 09:00")
-        self.assertEqual(format_quota_reset_time(weekly_reset, now=now, compact=True), "Fri")
+        self.assertEqual(format_quota_reset_time(primary_reset, now=now), "2h 55m")
+        self.assertEqual(format_quota_reset_time(weekly_reset, now=now), "2d 17h 55m")
+        self.assertEqual(format_quota_reset_time(weekly_reset, now=now, compact=True), "2d 17h 55m")
         self.assertEqual(subscription_effective_state(subscription, now=now), "ok")
         self.assertEqual(
             render_tmux_status(snapshot, now=now),
-            "GPT Pro Lite · 5h 88% left ↻18:00 · Weekly 83% left ↻Fri 09:00 · Today 90.2M · MTD 562.4M · $13.4k · 15:04 → 15:05",
+            "GPT Pro Lite · 5h 88% left ↻2h 55m · Weekly 83% left ↻2d 17h 55m · Today 90.2M · MTD 562.4M · $13.4k · 15:04 → 15:05",
         )
 
         compact = render_tmux_status(snapshot, now=now, max_width=96)
         self.assertEqual(
             compact,
-            "GPT Pro Lite · 5h 88% ↻18:00 · 7d 83% ↻Fri 09:00 · Today 90.2M · MTD 562.4M · $13.4k",
+            "GPT Pro Lite · 5h 88% ↻2h 55m · 7d 83% ↻2d 17h 55m · Today 90.2M · MTD 562.4M · $13.4k",
         )
         self.assertLessEqual(len(compact), 96)
-        self.assertIn("5h 88% ↻18:00", compact)
-        self.assertIn("7d 83% ↻Fri 09:00", compact)
-        self.assertEqual(render_tmux_status(snapshot, now=now, max_width=16), "5h 88% ↻18:00")
+        self.assertIn("5h 88% ↻2h 55m", compact)
+        self.assertIn("7d 83% ↻2d 17h 55m", compact)
+        self.assertEqual(render_tmux_status(snapshot, now=now, max_width=16), "5h 88% ↻2h 55m")
         self.assertNotIn(" I ", compact)
         self.assertNotIn(" O ", compact)
         styled = render_tmux_status(snapshot, now=now, max_width=96, use_tmux_style=True)
@@ -354,7 +377,7 @@ class TmuxStatusTests(unittest.TestCase):
         }
         low_subscription = {**subscription, "limits": [low_limit]}
         low_output = render_tmux_status({**snapshot, "subscription": low_subscription}, now=now, max_width=96)
-        self.assertIn("5h 40% ↻18:00", low_output)
+        self.assertIn("5h 40% ↻2h 55m", low_output)
 
         credited_limit = {
             **subscription["limits"][0],

@@ -451,6 +451,11 @@ def format_quota_reset_time(
     *,
     compact: bool = False,
 ) -> str:
+    """Format a quota reset as a floor-to-minute relative countdown.
+
+    ``compact`` remains accepted for callers of the previous absolute-time formatter; relative
+    countdowns already use the same compact representation at every status width.
+    """
     try:
         reset_epoch = int(resets_at)
     except (TypeError, ValueError, OverflowError):
@@ -458,25 +463,26 @@ def format_quota_reset_time(
     if reset_epoch <= 0:
         return ""
 
-    reference = now or dt.datetime.now().astimezone()
-    if reference.tzinfo is None:
-        reference = reference.astimezone()
+    reference = _to_utc(now)
     try:
-        reset = dt.datetime.fromtimestamp(reset_epoch, tz=dt.timezone.utc).astimezone(reference.tzinfo)
+        reset = dt.datetime.fromtimestamp(reset_epoch, tz=dt.timezone.utc)
     except (OSError, OverflowError, ValueError):
         return ""
-    if reset <= reference:
+
+    remaining_minutes = int((reset - reference).total_seconds() // 60)
+    if remaining_minutes <= 0:
         return "now"
 
-    day_delta = (reset.date() - reference.date()).days
-    if day_delta == 0:
-        return reset.strftime("%H:%M")
-    if day_delta < 7:
-        return reset.strftime("%a") if compact else reset.strftime("%a %H:%M")
-    if reset.year == reference.year:
-        date_label = f"{reset.strftime('%b')} {reset.day}"
-        return date_label.replace(" ", "") if compact else f"{date_label} {reset.strftime('%H:%M')}"
-    return reset.strftime("%Y-%m-%d")
+    days, remaining_minutes = divmod(remaining_minutes, 1_440)
+    hours, minutes = divmod(remaining_minutes, 60)
+    parts: list[str] = []
+    if days:
+        parts.append(f"{days}d")
+    if hours:
+        parts.append(f"{hours}h")
+    if minutes:
+        parts.append(f"{minutes}m")
+    return " ".join(parts) or "now"
 
 
 def _quota_window_labels(duration_minutes: Any, kind: str) -> tuple[str, str]:
@@ -548,25 +554,25 @@ def _quota_segment(
     label = compact_label if compact else full_label
     if prefix:
         label = f"{prefix} {label}"
-    reset = format_quota_reset_time(window.get("resets_at"), now, compact=False)
+    reset_countdown = format_quota_reset_time(window.get("resets_at"), now)
     if (
-        not reset
+        not reset_countdown
         and bool(window.get("inferred"))
         and remaining == 100
         and window.get("window_duration_minutes") == 300
     ):
-        reset = "now"
+        reset_countdown = "now"
     remaining_text = f"{remaining}%" if compact else f"{remaining}% left"
     if reached:
         remaining_text += "!"
     plain = f"{label} {remaining_text}"
-    if include_reset and reset:
-        plain += f" ↻{reset}"
+    if include_reset and reset_countdown:
+        plain += f" ↻{reset_countdown}"
 
     color = _quota_color(remaining, stale=stale, reached=reached)
     styled = tmux_style(label, fg=MUTED_COLOR) + " " + tmux_style(remaining_text, fg=color, bold=True)
-    if include_reset and reset:
-        styled += tmux_style(" ↻", fg=MUTED_COLOR) + tmux_style(reset, fg=RANGE_VALUE_COLOR)
+    if include_reset and reset_countdown:
+        styled += tmux_style(" ↻", fg=MUTED_COLOR) + tmux_style(reset_countdown, fg=RANGE_VALUE_COLOR)
     return plain, styled
 
 
