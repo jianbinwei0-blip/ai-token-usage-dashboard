@@ -1014,7 +1014,7 @@ def iter_jsonl_files(root: Path):
 
 
 def pricing_cache_key(pricing_catalog: PricingCatalog) -> str:
-    return f"{pricing_catalog.source}|{pricing_catalog.version}"
+    return f"{pricing_catalog.source}|{pricing_catalog.version}|{pricing_catalog.fingerprint}"
 
 
 def parse_codex_session_usage(session_path: Path) -> dict[str, int | str | dt.datetime] | None:
@@ -1132,7 +1132,8 @@ def build_codex_session_contribution(
     priced = pricing_catalog.price_usage(
         "codex",
         model,
-        uncached_input_tokens=input_tokens,
+        # Codex input_tokens includes cached_input_tokens; bill that portion only once.
+        uncached_input_tokens=max(input_tokens - cached_tokens, 0),
         output_tokens=output_tokens,
         cache_read_tokens=cached_tokens,
     )
@@ -1190,7 +1191,7 @@ def _reprice_codex_contribution(
     priced = pricing_catalog.price_usage(
         "codex",
         contribution[5],
-        uncached_input_tokens=contribution[6],
+        uncached_input_tokens=max(contribution[6] - contribution[8], 0),
         output_tokens=contribution[7],
         cache_read_tokens=contribution[8],
     )

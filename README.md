@@ -88,6 +88,19 @@ Environment variables:
 - `AI_USAGE_CODEX_BIN` (Codex executable used for the app-server account API; default: `codex`)
 - `AI_USAGE_CHATGPT_TIMEOUT_SECONDS` (overall account/quota request timeout; default: `3`)
 
+## GPT-6 Astra Pricing
+
+The built-in rate card uses [OpenAI's GPT-6 Astra pricing](https://developers.openai.com/api/docs/models/gpt-6-astra), verified September 11, 2026. Standard short-context rates per million tokens are:
+
+- Input: **$10.00**
+- Output: **$50.00**
+- Cache reads: **$1.00**
+- Cache writes: **$12.50**
+
+These rates apply to `gpt-6-astra` and its dated snapshots in Codex and PI, with DSH using the same fallback rates. Native PI costs and explicit pricing-file overrides retain precedence. Derived costs are estimates at these rates; they do not infer long-context premiums (over 272K input tokens per request), Batch/Flex discounts, Fast mode, or regional uplifts from session totals.
+
+Pricing changes invalidate saved derived Codex costs on the next recalculation, including retained history whose source logs have been deleted, even when a pricing override keeps the same version.
+
 ## Tmux Status Line
 
 You can surface a compact AI usage pulse directly in tmux.
@@ -174,7 +187,7 @@ curl http://127.0.0.1:8765/health
 - The dashboard is designed for local use and reads local session logs from Codex, Claude, PI, and DeepSeek Harness when present.
 - Daily rows in the injected dataset include `sessions`, `input_tokens`, `output_tokens`, `cached_tokens`, `total_tokens`, `input_cost_usd`, `output_cost_usd`, `cached_cost_usd`, `total_cost_usd`, `cost_complete`, and `breakdown_rows` grouped by `(agent_cli, model)`.
 - A built-in versioned pricing table is used for derived costs and can be overridden via `AI_USAGE_PRICING_FILE`. DSH first checks a `dsh` rate-card entry, then reuses known PI, Claude, or Codex model-family rates; an unmapped DSH model is reported as partial cost rather than trusted zero.
-- Codex usage keeps the latest `token_count` snapshot per session, extracts `originator`/`source` for the CLI bucket, uses the latest observed `turn_context.payload.model` when present, and prices uncached input separately from cached tokens.
+- Codex usage keeps the latest `token_count` snapshot per session, extracts `originator`/`source` for the CLI bucket, and uses the latest observed `turn_context.payload.model` when present. Its `input_tokens` already includes `cached_input_tokens`, so only `max(input_tokens - cached_input_tokens, 0)` is billed at the uncached rate; cached tokens are billed once at the cache-read rate. Displayed token totals are unchanged.
 - ChatGPT subscription status is fetched through the Codex app server, and only normalized plan/quota/reset/credit metadata is cached. Email addresses, account IDs, and OAuth tokens are neither returned nor persisted by the dashboard.
 - Claude request usage is deduplicated by `(sessionId, requestId)`, keeps the highest observed token values for the request, computes `cached_tokens = cache_creation_input_tokens + cache_read_input_tokens`, and derives cost from the model rate card.
 - Claude-style context attribution is extracted when transcript events expose it: Skills from `<command-message>` slash commands, Agents/Subagents from `Agent`/`Task` tool calls, MCP servers from `mcp__server__method` tools, Tools from `tool_use` blocks, and Plugins / Extensions from namespaced slash commands plus plugin/extension metadata or tool namespaces. Attribution token/cost shares are estimated from the session totals for matching transcript events.

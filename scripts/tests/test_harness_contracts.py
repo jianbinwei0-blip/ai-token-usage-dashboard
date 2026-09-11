@@ -5,11 +5,14 @@ import tempfile
 import unittest
 from datetime import datetime, timezone
 from pathlib import Path
+from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+from dashboard_core.collectors import load_persistent_parse_caches
 from dashboard_core.config import DashboardConfig
 from dashboard_core.pipeline import recalc_dashboard
+from dashboard_core.pricing import BUILTIN_RATE_CARD
 
 
 HTML_TEMPLATE = """<!DOCTYPE html>
@@ -161,16 +164,16 @@ class HarnessContractsTests(unittest.TestCase):
             self.assertEqual(payload_first["output_tokens"], 25)
             self.assertEqual(payload_first["cached_tokens"], 25)
             self.assertEqual(payload_first["ytd_total_tokens"], 140)
-            self.assertAlmostEqual(payload_first["input_cost_usd"], 0.00028)
+            self.assertAlmostEqual(payload_first["input_cost_usd"], 0.00023)
             self.assertAlmostEqual(payload_first["output_cost_usd"], 0.000375)
             self.assertAlmostEqual(payload_first["cached_cost_usd"], 0.00001685)
-            self.assertAlmostEqual(payload_first["total_cost_usd"], 0.00067185)
+            self.assertAlmostEqual(payload_first["total_cost_usd"], 0.00062185)
             self.assertTrue(payload_first["cost_complete"])
             self.assertEqual(payload_first["pricing"]["warning_count"], 0)
             self.assertEqual(payload_first["providers"]["combined"]["input_tokens"], 110)
             self.assertEqual(payload_first["providers"]["combined"]["output_tokens"], 25)
             self.assertEqual(payload_first["providers"]["combined"]["cached_tokens"], 25)
-            self.assertAlmostEqual(payload_first["providers"]["combined"]["total_cost_usd"], 0.00067185)
+            self.assertAlmostEqual(payload_first["providers"]["combined"]["total_cost_usd"], 0.00062185)
 
             combined_rows = dataset["providers"]["combined"]["rows"]
             claude_day = datetime.fromisoformat("2026-03-03T05:00:00+00:00").astimezone().date().isoformat()
@@ -184,10 +187,10 @@ class HarnessContractsTests(unittest.TestCase):
                         "output_tokens": 20,
                         "cached_tokens": 20,
                         "total_tokens": 120,
-                        "input_cost_usd": 0.00025,
+                        "input_cost_usd": 0.0002,
                         "output_cost_usd": 0.0003,
                         "cached_cost_usd": 0.000005,
-                        "total_cost_usd": 0.000555,
+                        "total_cost_usd": 0.000505,
                         "cost_complete": True,
                         "cost_status": "complete",
                         "breakdown_rows": [
@@ -199,10 +202,10 @@ class HarnessContractsTests(unittest.TestCase):
                                 "output_tokens": 20,
                                 "cached_tokens": 20,
                                 "total_tokens": 120,
-                                "input_cost_usd": 0.00025,
+                                "input_cost_usd": 0.0002,
                                 "output_cost_usd": 0.0003,
                                 "cached_cost_usd": 0.000005,
-                                "total_cost_usd": 0.000555,
+                                "total_cost_usd": 0.000505,
                                 "cost_complete": True,
                                 "cost_status": "complete",
                             }
@@ -267,10 +270,10 @@ class HarnessContractsTests(unittest.TestCase):
                         "output_tokens": 20,
                         "cached_tokens": 20,
                         "total_tokens": 120,
-                        "input_cost_usd": 0.00025,
+                        "input_cost_usd": 0.0002,
                         "output_cost_usd": 0.0003,
                         "cached_cost_usd": 0.000005,
-                        "total_cost_usd": 0.000555,
+                        "total_cost_usd": 0.000505,
                         "cost_complete": True,
                         "cost_status": "complete",
                     },
@@ -456,6 +459,73 @@ class HarnessContractsTests(unittest.TestCase):
             self.assertEqual(payload["pricing"]["warnings"], [{"provider": "codex", "model": "unknown-model"}])
             self.assertFalse(dataset["providers"]["combined"]["rows"][0]["cost_complete"])
             self.assertEqual(dataset["providers"]["combined"]["rows"][0]["cost_status"], "partial")
+
+    def test_gpt6_rate_update_reprices_saved_usage_with_unchanged_override_version(self) -> None:
+        old_rate_card = json.loads(json.dumps(BUILTIN_RATE_CARD))
+        for provider in ("codex", "pi"):
+            old_rate_card["providers"][provider].pop("gpt-6-astra")
+
+        for delete_source in (False, True):
+            with self.subTest(delete_source=delete_source), tempfile.TemporaryDirectory() as tmpdir:
+                root = Path(tmpdir)
+                dashboard_path = root / "index.html"
+                dashboard_path.write_text(HTML_TEMPLATE, encoding="utf-8")
+                pricing_file = root / "pricing.json"
+                pricing_file.write_text('{"version":"unchanged-custom-version"}', encoding="utf-8")
+                codex_root = root / "codex"
+                session_file = codex_root / "2026" / "09" / "11" / "gpt6.jsonl"
+                self._write_jsonl(
+                    session_file,
+                    [
+                        {"type": "turn_context", "payload": {"model": "gpt-6-astra"}},
+                        {
+                            "type": "event_msg",
+                            "payload": {
+                                "type": "token_count",
+                                "info": {
+                                    "total_token_usage": {
+                                        "input_tokens": 100,
+                                        "cached_input_tokens": 60,
+                                        "output_tokens": 10,
+                                        "total_tokens": 110,
+                                    }
+                                },
+                            },
+                        },
+                    ],
+                )
+                config = DashboardConfig(
+                    host="127.0.0.1",
+                    port=8765,
+                    dashboard_html=dashboard_path,
+                    sessions_root=codex_root,
+                    claude_projects_root=root / "claude",
+                    pi_agent_root=root / "pi",
+                    dsh_home=root / "dsh",
+                    pricing_file=pricing_file,
+                    parse_cache_file=root / "history.json",
+                )
+                fixed_now = datetime(2026, 9, 12, 15, tzinfo=timezone.utc)
+                with patch("dashboard_core.pricing.BUILTIN_RATE_CARD", old_rate_card):
+                    before = recalc_dashboard(config, now=fixed_now)
+                self.assertFalse(before["cost_complete"])
+                self.assertEqual(before["total_cost_usd"], 0.0)
+
+                if delete_source:
+                    session_file.unlink()
+                load_persistent_parse_caches(root / "empty-cache.json")
+                after = recalc_dashboard(config, now=fixed_now)
+                self.assertEqual(after["pricing"]["version"], before["pricing"]["version"])
+                self.assertEqual(after["pricing"]["warnings"], [])
+                self.assertTrue(after["cost_complete"])
+                self.assertEqual(after["ytd_total_tokens"], before["ytd_total_tokens"])
+                self.assertAlmostEqual(after["input_cost_usd"], 0.0004)
+                self.assertAlmostEqual(after["cached_cost_usd"], 0.00006)
+                self.assertAlmostEqual(after["output_cost_usd"], 0.0005)
+                self.assertAlmostEqual(after["total_cost_usd"], 0.00096)
+                dataset = self._read_dataset_from_html(dashboard_path.read_text(encoding="utf-8"))
+                self.assertAlmostEqual(dataset["providers"]["combined"]["rows"][0]["total_cost_usd"], 0.00096)
+                self.assertEqual(recalc_dashboard(config, now=fixed_now), after)
 
     def test_recalc_pipeline_adds_pi_provider_and_filters_provider_selector(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

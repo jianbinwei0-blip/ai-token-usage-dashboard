@@ -27,6 +27,58 @@ class PricingTests(unittest.TestCase):
         self.assertAlmostEqual(priced.cached_cost_usd, 0.00000625)
         self.assertAlmostEqual(priced.total_cost_usd, 0.00188125)
 
+    def test_gpt6_astra_pricing_covers_codex_pi_and_dsh(self) -> None:
+        for provider in ("codex", "pi", "dsh"):
+            for model in ("gpt-6-astra", "gpt-6-astra-2026-09-11"):
+                with self.subTest(provider=provider, model=model):
+                    catalog = PricingCatalog.from_file(None)
+                    priced = catalog.price_usage(
+                        provider,
+                        model,
+                        uncached_input_tokens=150,
+                        output_tokens=100,
+                        cache_read_tokens=25,
+                        cache_write_tokens=20,
+                    )
+
+                    self.assertTrue(priced.cost_complete)
+                    self.assertEqual(priced.source, "derived")
+                    self.assertAlmostEqual(priced.input_cost_usd, 0.0015)
+                    self.assertAlmostEqual(priced.output_cost_usd, 0.005)
+                    self.assertAlmostEqual(priced.cached_cost_usd, 0.000275)
+                    self.assertAlmostEqual(priced.total_cost_usd, 0.006775)
+                    self.assertEqual(catalog.warnings(), [])
+
+    def test_gpt6_astra_native_cost_is_not_replaced_by_standard_rates(self) -> None:
+        catalog = PricingCatalog.from_file(None)
+        priced = catalog.price_usage(
+            "pi",
+            "gpt-6-astra",
+            uncached_input_tokens=150,
+            output_tokens=100,
+            cache_read_tokens=25,
+            cache_write_tokens=20,
+            native_cost={
+                "input": 0.003,
+                "output": 0.0075,
+                "cacheRead": 0.00005,
+                "cacheWrite": 0.0005,
+                "total": 0.01105,
+            },
+        )
+
+        self.assertTrue(priced.cost_complete)
+        self.assertEqual(priced.source, "native")
+        self.assertAlmostEqual(priced.input_cost_usd, 0.003)
+        self.assertAlmostEqual(priced.output_cost_usd, 0.0075)
+        self.assertAlmostEqual(priced.cached_cost_usd, 0.00055)
+        self.assertAlmostEqual(priced.total_cost_usd, 0.01105)
+        self.assertEqual(catalog.warnings(), [])
+
+    def test_other_gpt6_models_are_not_assumed_to_use_astra_pricing(self) -> None:
+        catalog = PricingCatalog.from_file(None)
+        self.assertIsNone(catalog.resolve_rates("codex", "gpt-6-other"))
+
     def test_dsh_pricing_reuses_known_model_family_rates(self) -> None:
         catalog = PricingCatalog.from_file(None)
 
@@ -168,6 +220,29 @@ class PricingTests(unittest.TestCase):
             self.assertAlmostEqual(priced.output_cost_usd, 0.0001)
             self.assertAlmostEqual(priced.cached_cost_usd, 0.000002)
             self.assertAlmostEqual(priced.total_cost_usd, 0.000202)
+            self.assertEqual(catalog.resolve_rates("codex", "gpt-6-astra").output_per_million, 50.0)
+
+    def test_gpt6_astra_specific_override_takes_precedence(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            pricing_file = Path(tmpdir) / "pricing.json"
+            pricing_file.write_text(
+                '{"version":"custom-test","providers":{"dsh":{"gpt-6-astra":{"input_per_million":20.0,"output_per_million":100.0,"cache_read_per_million":2.0,"cache_write_per_million":25.0}}}}',
+                encoding="utf-8",
+            )
+            catalog = PricingCatalog.from_file(pricing_file)
+            priced = catalog.price_usage(
+                "dsh",
+                "gpt-6-astra-2026-09-11",
+                uncached_input_tokens=150,
+                output_tokens=100,
+                cache_read_tokens=25,
+                cache_write_tokens=20,
+            )
+
+            self.assertTrue(priced.cost_complete)
+            self.assertAlmostEqual(priced.total_cost_usd, 0.01355)
+            self.assertEqual(catalog.version, "custom-test")
+            self.assertEqual(catalog.resolve_rates("pi", "gpt-6-astra").output_per_million, 50.0)
 
 
 if __name__ == "__main__":

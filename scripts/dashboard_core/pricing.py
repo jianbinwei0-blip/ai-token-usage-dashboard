@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import math
 from dataclasses import dataclass
@@ -8,10 +9,18 @@ from pathlib import Path
 from .models import round_cost
 
 
+# GPT-6 Astra: Standard, short-context USD rates per 1M tokens.
+# https://developers.openai.com/api/docs/models/gpt-6-astra
 BUILTIN_RATE_CARD = {
-    "version": "2026-03-08",
+    "version": "2026-09-11",
     "providers": {
         "codex": {
+            "gpt-6-astra": {
+                "input_per_million": 10.0,
+                "output_per_million": 50.0,
+                "cache_read_per_million": 1.0,
+                "cache_write_per_million": 12.5,
+            },
             "gpt-5": {
                 "input_per_million": 2.5,
                 "output_per_million": 15.0,
@@ -20,6 +29,12 @@ BUILTIN_RATE_CARD = {
             }
         },
         "pi": {
+            "gpt-6-astra": {
+                "input_per_million": 10.0,
+                "output_per_million": 50.0,
+                "cache_read_per_million": 1.0,
+                "cache_write_per_million": 12.5,
+            },
             "gpt-5": {
                 "input_per_million": 2.5,
                 "output_per_million": 15.0,
@@ -84,6 +99,9 @@ class PricingCatalog:
         self._rate_card = rate_card
         self.source = source
         self.version = str(rate_card.get("version") or "unknown")
+        # An override can retain its version while the merged built-in rates change.
+        encoded = json.dumps(rate_card, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        self.fingerprint = hashlib.sha256(encoded).hexdigest()
         self._warnings: set[tuple[str, str]] = set()
         self._resolved_rates: dict[tuple[str, str], ModelRates | None] = {}
 

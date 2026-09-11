@@ -203,10 +203,10 @@ def expected_combined_rows() -> list[dict]:
             "output_tokens": 30,
             "cached_tokens": 25,
             "total_tokens": 190,
-            "input_cost_usd": 0.0003925,
+            "input_cost_usd": 0.0003425,
             "output_cost_usd": 0.00045,
             "cached_cost_usd": 0.00001685,
-            "total_cost_usd": 0.00085935,
+            "total_cost_usd": 0.00080935,
             "cost_complete": True,
             "cost_status": "complete",
             "breakdown_rows": [
@@ -218,10 +218,10 @@ def expected_combined_rows() -> list[dict]:
                     "output_tokens": 20,
                     "cached_tokens": 20,
                     "total_tokens": 120,
-                    "input_cost_usd": 0.00025,
+                    "input_cost_usd": 0.0002,
                     "output_cost_usd": 0.0003,
                     "cached_cost_usd": 0.000005,
-                    "total_cost_usd": 0.000555,
+                    "total_cost_usd": 0.000505,
                     "cost_complete": True,
                     "cost_status": "complete",
                 },
@@ -280,10 +280,10 @@ def validate_render(payload: dict, html: str, fixed_now: datetime) -> None:
         "output_tokens": 30,
         "cached_tokens": 25,
         "ytd_total_tokens": 190,
-        "input_cost_usd": 0.0003925,
+        "input_cost_usd": 0.0003425,
         "output_cost_usd": 0.00045,
         "cached_cost_usd": 0.00001685,
-        "total_cost_usd": 0.00085935,
+        "total_cost_usd": 0.00080935,
         "cost_complete": True,
         "cost_status": "complete",
     }
@@ -296,7 +296,7 @@ def validate_render(payload: dict, html: str, fixed_now: datetime) -> None:
         raise AssertionError("Benchmark fixture unexpectedly produced pricing warnings")
     if payload["providers"]["combined"]["ytd_total_tokens"] != 190:
         raise AssertionError("Combined provider summary ytd_total_tokens mismatch")
-    if payload["providers"]["combined"]["total_cost_usd"] != 0.00085935:
+    if payload["providers"]["combined"]["total_cost_usd"] != 0.00080935:
         raise AssertionError("Combined provider summary total_cost_usd mismatch")
 
     combined_rows = dataset["providers"]["combined"]["rows"]

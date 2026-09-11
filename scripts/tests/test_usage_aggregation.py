@@ -114,10 +114,10 @@ class UsageAggregationTests(unittest.TestCase):
             self.assertEqual(totals[usage_day].cached_tokens, 30)
             self.assertEqual(totals[usage_day].total_tokens, 325)
             self.assertFalse(totals[usage_day].cost_complete)
-            self.assertAlmostEqual(totals[usage_day].input_cost_usd, 0.000375)
+            self.assertAlmostEqual(totals[usage_day].input_cost_usd, 0.0003125)
             self.assertAlmostEqual(totals[usage_day].output_cost_usd, 0.0015)
             self.assertAlmostEqual(totals[usage_day].cached_cost_usd, 0.00000625)
-            self.assertAlmostEqual(totals[usage_day].total_cost_usd, 0.00188125)
+            self.assertAlmostEqual(totals[usage_day].total_cost_usd, 0.00181875)
 
             breakdown = totals[usage_day].breakdowns[("codex_cli_rs", "gpt-5.2")]
             self.assertEqual(breakdown.sessions, 1)
@@ -125,13 +125,48 @@ class UsageAggregationTests(unittest.TestCase):
             self.assertEqual(breakdown.cached_tokens, 25)
             self.assertEqual(breakdown.output_tokens, 100)
             self.assertEqual(breakdown.total_tokens, 250)
-            self.assertAlmostEqual(breakdown.total_cost_usd, 0.00188125)
+            self.assertAlmostEqual(breakdown.total_cost_usd, 0.00181875)
 
             fallback_breakdown = totals[usage_day].breakdowns[("cli", "unknown")]
             self.assertEqual(fallback_breakdown.sessions, 1)
             self.assertEqual(fallback_breakdown.total_tokens, 75)
             self.assertAlmostEqual(fallback_breakdown.total_cost_usd, 0.0)
             self.assertFalse(fallback_breakdown.cost_complete)
+
+    def test_codex_gpt6_cached_input_is_not_charged_at_the_uncached_rate(self) -> None:
+        for cached_tokens, expected_cost in ((0, 0.0015), (60, 0.00096), (100, 0.0006), (120, 0.00062)):
+            with self.subTest(cached_tokens=cached_tokens), tempfile.TemporaryDirectory() as tmpdir:
+                root = Path(tmpdir)
+                self._write_jsonl(
+                    root / "2026" / "09" / "11" / "gpt6.jsonl",
+                    [
+                        {"type": "turn_context", "payload": {"model": "gpt-6-astra"}},
+                        {
+                            "type": "event_msg",
+                            "payload": {
+                                "type": "token_count",
+                                "info": {
+                                    "total_token_usage": {
+                                        "input_tokens": 100,
+                                        "cached_input_tokens": cached_tokens,
+                                        "output_tokens": 10,
+                                        "total_tokens": 110,
+                                    }
+                                },
+                            },
+                        },
+                    ],
+                )
+
+                totals, activity = collect_codex_usage_data(root)
+                daily = totals[date(2026, 9, 11)]
+                self.assertEqual(daily.input_tokens, 100)
+                self.assertEqual(daily.cached_tokens, cached_tokens)
+                self.assertEqual(daily.total_tokens, 110)
+                self.assertTrue(daily.cost_complete)
+                self.assertAlmostEqual(daily.total_cost_usd, expected_cost)
+                self.assertAlmostEqual(daily.breakdowns[("codex", "gpt-6-astra")].total_cost_usd, expected_cost)
+                self.assertAlmostEqual(activity[(date(2026, 9, 11), 0)].total_cost_usd, expected_cost)
 
     def test_collect_codex_usage_data_tracks_activity_hour_from_session_timestamp(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
