@@ -9,12 +9,52 @@ from pathlib import Path
 from .models import round_cost
 
 
-# GPT-6 Astra: Standard, short-context USD rates per 1M tokens.
-# https://developers.openai.com/api/docs/models/gpt-6-astra
+# Standard, short-context USD rates per 1M tokens, verified 2026-10-01.
+# https://developers.openai.com/api/docs/pricing
+RECENT_OPENAI_RATES = {
+    "gpt-6.1-sol": {
+        "input_per_million": 2.0,
+        "output_per_million": 10.0,
+        "cache_read_per_million": 0.1,
+        "cache_write_per_million": 2.5,
+    },
+    "gpt-6-sol": {
+        "input_per_million": 2.0,
+        "output_per_million": 10.0,
+        "cache_read_per_million": 0.2,
+        "cache_write_per_million": 2.5,
+    },
+    "gpt-6-luna": {
+        "input_per_million": 0.1,
+        "output_per_million": 0.5,
+        "cache_read_per_million": 0.01,
+        "cache_write_per_million": 0.125,
+    },
+    "gpt-5.6-sol": {
+        "input_per_million": 4.0,
+        "output_per_million": 20.0,
+        "cache_read_per_million": 0.4,
+        "cache_write_per_million": 5.0,
+    },
+    "gpt-5.6-terra": {
+        "input_per_million": 2.0,
+        "output_per_million": 12.0,
+        "cache_read_per_million": 0.2,
+        "cache_write_per_million": 2.5,
+    },
+    "gpt-5.6-luna": {
+        "input_per_million": 0.2,
+        "output_per_million": 1.2,
+        "cache_read_per_million": 0.02,
+        "cache_write_per_million": 0.25,
+    },
+}
+
 BUILTIN_RATE_CARD = {
-    "version": "2026-09-11",
+    "version": "2026-10-01",
     "providers": {
         "codex": {
+            **RECENT_OPENAI_RATES,
             "gpt-6-astra": {
                 "input_per_million": 10.0,
                 "output_per_million": 50.0,
@@ -29,6 +69,7 @@ BUILTIN_RATE_CARD = {
             }
         },
         "pi": {
+            **RECENT_OPENAI_RATES,
             "gpt-6-astra": {
                 "input_per_million": 10.0,
                 "output_per_million": 50.0,
@@ -42,6 +83,8 @@ BUILTIN_RATE_CARD = {
                 "cache_write_per_million": 2.5,
             }
         },
+        # Standard API rates with 5-minute cache writes.
+        # https://platform.claude.com/docs/en/about-claude/pricing
         "claude": {
             "claude-sonnet-4": {
                 "input_per_million": 3.0,
@@ -49,11 +92,29 @@ BUILTIN_RATE_CARD = {
                 "cache_read_per_million": 0.3,
                 "cache_write_per_million": 3.75,
             },
+            "claude-sonnet-5": {
+                "input_per_million": 2.0,
+                "output_per_million": 10.0,
+                "cache_read_per_million": 0.2,
+                "cache_write_per_million": 2.5,
+            },
+            "claude-sonnet-5-5": {
+                "input_per_million": 2.0,
+                "output_per_million": 10.0,
+                "cache_read_per_million": 0.2,
+                "cache_write_per_million": 2.5,
+            },
             "claude-fable-5": {
-                "input_per_million": 3.0,
-                "output_per_million": 15.0,
-                "cache_read_per_million": 0.3,
-                "cache_write_per_million": 3.75,
+                "input_per_million": 10.0,
+                "output_per_million": 50.0,
+                "cache_read_per_million": 1.0,
+                "cache_write_per_million": 12.5,
+            },
+            "claude-fable-5-1": {
+                "input_per_million": 10.0,
+                "output_per_million": 50.0,
+                "cache_read_per_million": 0.25,
+                "cache_write_per_million": 12.5,
             },
             "claude-haiku-4": {
                 "input_per_million": 0.8,
@@ -61,11 +122,61 @@ BUILTIN_RATE_CARD = {
                 "cache_read_per_million": 0.08,
                 "cache_write_per_million": 1.0,
             },
+            "claude-haiku-4-5": {
+                "input_per_million": 1.0,
+                "output_per_million": 5.0,
+                "cache_read_per_million": 0.1,
+                "cache_write_per_million": 1.25,
+            },
             "claude-opus-4": {
                 "input_per_million": 15.0,
                 "output_per_million": 75.0,
                 "cache_read_per_million": 1.5,
                 "cache_write_per_million": 18.75,
+            },
+            **{
+                f"claude-opus-4-{minor}": {
+                    "input_per_million": 5.0,
+                    "output_per_million": 25.0,
+                    "cache_read_per_million": 0.5,
+                    "cache_write_per_million": 6.25,
+                }
+                for minor in (5, 6, 7, 8)
+            },
+            "claude-opus-5": {
+                "input_per_million": 5.0,
+                "output_per_million": 25.0,
+                "cache_read_per_million": 0.5,
+                "cache_write_per_million": 6.25,
+            },
+            "claude-opus-5-5": {
+                "input_per_million": 4.0,
+                "output_per_million": 20.0,
+                "cache_read_per_million": 0.2,
+                "cache_write_per_million": 5.0,
+            },
+        },
+        # Peak rates; off-peak is half. Flash legacy aliases route to V4.1 Flash
+        # since 2026-09-10. Cache writes use the ordinary cache-miss input rate.
+        # https://api-docs.deepseek.com/quick_start/pricing
+        "dsh": {
+            "deepseek-flash": {
+                "input_per_million": 0.3,
+                "output_per_million": 1.2,
+                "cache_read_per_million": 0.006,
+                "cache_write_per_million": 0.3,
+            },
+            "deepseek-v4-flash": {
+                "input_per_million": 0.3,
+                "output_per_million": 1.2,
+                "cache_read_per_million": 0.006,
+                "cache_write_per_million": 0.3,
+            },
+            "deepseek-v4-pro": {
+                "input_per_million": 1.32,
+                "output_per_million": 3.96,
+                "cache_read_per_million": 0.044,
+                "cache_write_per_million": 1.32,
             },
         },
     },

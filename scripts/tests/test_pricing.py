@@ -49,6 +49,90 @@ class PricingTests(unittest.TestCase):
                     self.assertAlmostEqual(priced.total_cost_usd, 0.006775)
                     self.assertEqual(catalog.warnings(), [])
 
+    def test_recent_openai_models_use_verified_standard_rates(self) -> None:
+        expected_rates = {
+            "gpt-6.1-sol": (2.0, 10.0, 0.1, 2.5),
+            "gpt-6-sol": (2.0, 10.0, 0.2, 2.5),
+            "gpt-6-luna": (0.1, 0.5, 0.01, 0.125),
+            "gpt-5.6-sol": (4.0, 20.0, 0.4, 5.0),
+            "gpt-5.6-terra": (2.0, 12.0, 0.2, 2.5),
+            "gpt-5.6-luna": (0.2, 1.2, 0.02, 0.25),
+        }
+        for provider in ("codex", "pi", "dsh"):
+            for model, expected in expected_rates.items():
+                for model_name in (model, f"{model}-2026-10-01"):
+                    with self.subTest(provider=provider, model=model_name):
+                        catalog = PricingCatalog.from_file(None)
+                        priced = catalog.price_usage(
+                            provider, model_name, uncached_input_tokens=1_000_000,
+                            output_tokens=1_000_000, cache_read_tokens=1_000_000,
+                            cache_write_tokens=1_000_000,
+                        )
+                        self.assertTrue(priced.cost_complete)
+                        self.assertEqual(priced.source, "derived")
+                        self.assertAlmostEqual(priced.input_cost_usd, expected[0])
+                        self.assertAlmostEqual(priced.output_cost_usd, expected[1])
+                        self.assertAlmostEqual(priced.cached_cost_usd, expected[2] + expected[3])
+                        self.assertAlmostEqual(priced.total_cost_usd, sum(expected))
+                        self.assertEqual(catalog.warnings(), [])
+
+    def test_deepseek_flash_aliases_and_pro_use_verified_peak_rates(self) -> None:
+        for model, expected in (
+            ("deepseek-flash", (0.3, 1.2, 0.006, 0.3)),
+            ("deepseek-v4-flash", (0.3, 1.2, 0.006, 0.3)),
+            ("deepseek-v4-flash-vision-exp", (0.3, 1.2, 0.006, 0.3)),
+            ("deepseek-v4-pro", (1.32, 3.96, 0.044, 1.32)),
+        ):
+            with self.subTest(model=model):
+                catalog = PricingCatalog.from_file(None)
+                priced = catalog.price_usage(
+                    "dsh", model, uncached_input_tokens=1_000_000,
+                    output_tokens=1_000_000, cache_read_tokens=1_000_000,
+                    cache_write_tokens=1_000_000,
+                )
+                self.assertTrue(priced.cost_complete)
+                self.assertAlmostEqual(priced.input_cost_usd, expected[0])
+                self.assertAlmostEqual(priced.output_cost_usd, expected[1])
+                self.assertAlmostEqual(priced.cached_cost_usd, expected[2] + expected[3])
+                self.assertAlmostEqual(priced.total_cost_usd, sum(expected))
+                self.assertEqual(catalog.warnings(), [])
+
+    def test_recent_claude_models_do_not_inherit_legacy_family_rates(self) -> None:
+        expected_rates = {
+            "claude-fable-5-1": (10.0, 50.0, 0.25, 12.5),
+            "claude-opus-5-5": (4.0, 20.0, 0.2, 5.0),
+            "claude-sonnet-5-5": (2.0, 10.0, 0.2, 2.5),
+            "claude-opus-5": (5.0, 25.0, 0.5, 6.25),
+            "claude-sonnet-5": (2.0, 10.0, 0.2, 2.5),
+            "claude-haiku-4-5-20251001": (1.0, 5.0, 0.1, 1.25),
+            **{f"claude-opus-4-{minor}": (5.0, 25.0, 0.5, 6.25) for minor in (5, 6, 7, 8)},
+        }
+        for provider in ("claude", "dsh"):
+            for model, expected in expected_rates.items():
+                with self.subTest(provider=provider, model=model):
+                    catalog = PricingCatalog.from_file(None)
+                    priced = catalog.price_usage(
+                        provider, model, uncached_input_tokens=1_000_000,
+                        output_tokens=1_000_000, cache_read_tokens=1_000_000,
+                        cache_write_tokens=1_000_000,
+                    )
+                    self.assertTrue(priced.cost_complete)
+                    self.assertAlmostEqual(priced.input_cost_usd, expected[0])
+                    self.assertAlmostEqual(priced.output_cost_usd, expected[1])
+                    self.assertAlmostEqual(priced.cached_cost_usd, expected[2] + expected[3])
+                    self.assertAlmostEqual(priced.total_cost_usd, sum(expected))
+
+    def test_new_model_native_cost_is_not_replaced_by_standard_rates(self) -> None:
+        catalog = PricingCatalog.from_file(None)
+        priced = catalog.price_usage(
+            "pi", "gpt-6.1-sol", uncached_input_tokens=1_000_000,
+            output_tokens=1_000_000, cache_read_tokens=1_000_000,
+            native_cost={"input": 4.0, "output": 15.0, "cacheRead": 0.2, "total": 19.2},
+        )
+        self.assertTrue(priced.cost_complete)
+        self.assertEqual(priced.source, "native")
+        self.assertEqual(priced.total_cost_usd, 19.2)
+
     def test_gpt6_astra_native_cost_is_not_replaced_by_standard_rates(self) -> None:
         catalog = PricingCatalog.from_file(None)
         priced = catalog.price_usage(
@@ -92,7 +176,7 @@ class PricingTests(unittest.TestCase):
 
         self.assertTrue(priced.cost_complete)
         self.assertEqual(priced.source, "derived")
-        self.assertAlmostEqual(priced.total_cost_usd, 0.00188125)
+        self.assertAlmostEqual(priced.total_cost_usd, 0.00261)
         self.assertEqual(catalog.warnings(), [])
 
     def test_claude_pricing_derives_cache_write_and_cache_read_rollup(self) -> None:
@@ -114,7 +198,7 @@ class PricingTests(unittest.TestCase):
         self.assertAlmostEqual(priced.cached_cost_usd, 0.000084)
         self.assertAlmostEqual(priced.total_cost_usd, 0.002769)
 
-    def test_claude_fable_pricing_uses_sonnet_family_rate(self) -> None:
+    def test_claude_fable_pricing_uses_its_own_verified_rate(self) -> None:
         catalog = PricingCatalog.from_file(None)
 
         priced = catalog.price_usage(
@@ -128,10 +212,10 @@ class PricingTests(unittest.TestCase):
 
         self.assertTrue(priced.cost_complete)
         self.assertEqual(priced.source, "derived")
-        self.assertAlmostEqual(priced.input_cost_usd, 0.00003)
-        self.assertAlmostEqual(priced.output_cost_usd, 0.002655)
-        self.assertAlmostEqual(priced.cached_cost_usd, 0.000084)
-        self.assertAlmostEqual(priced.total_cost_usd, 0.002769)
+        self.assertAlmostEqual(priced.input_cost_usd, 0.0001)
+        self.assertAlmostEqual(priced.output_cost_usd, 0.00885)
+        self.assertAlmostEqual(priced.cached_cost_usd, 0.00028)
+        self.assertAlmostEqual(priced.total_cost_usd, 0.00923)
         self.assertEqual(catalog.warnings(), [])
 
     def test_unmapped_zero_usage_is_complete_zero_cost(self) -> None:

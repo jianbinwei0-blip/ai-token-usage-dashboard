@@ -121,17 +121,42 @@ def available_providers(dataset_payload: dict[str, Any]) -> list[str]:
     ]
 
 
-def filter_pricing_warnings(pricing_metadata: dict[str, Any], scope: str) -> list[dict[str, Any]]:
+def filter_pricing_warnings(
+    pricing_metadata: dict[str, Any],
+    scope: str,
+    providers_payload: dict[str, Any],
+    start_date: dt.date,
+    end_date: dt.date,
+) -> list[dict[str, Any]]:
     warnings = pricing_metadata.get("warnings")
     if not isinstance(warnings, list):
         return []
-    if scope == "combined":
-        return [warning for warning in warnings if isinstance(warning, dict)]
-    return [
-        warning
-        for warning in warnings
-        if isinstance(warning, dict) and str(warning.get("provider") or "").strip().lower() == scope
-    ]
+
+    scoped_warnings = []
+    for warning in warnings:
+        if not isinstance(warning, dict):
+            continue
+        provider = str(warning.get("provider") or "").strip().lower()
+        if scope != "combined" and provider != scope:
+            continue
+        provider_payload = providers_payload.get(provider) or {}
+        rows = provider_payload.get("rows") if isinstance(provider_payload, dict) else []
+        if not isinstance(rows, list):
+            continue
+        for row in rows:
+            row_date = parse_iso_date(row.get("date"), end_date)
+            if not (start_date <= row_date <= end_date) or bool(row.get("cost_complete", True)):
+                continue
+            breakdown_rows = row.get("breakdown_rows")
+            # Older datasets may lack model breakdowns; the dated row still proves
+            # that this provider has incomplete pricing in the selected range.
+            if not breakdown_rows or any(
+                bucket.get("model") == warning.get("model") and not bool(bucket.get("cost_complete", True))
+                for bucket in breakdown_rows
+            ):
+                scoped_warnings.append(warning)
+                break
+    return scoped_warnings
 
 
 def summary_for_rows(rows: list[dict[str, Any]], start_date: dt.date, end_date: dt.date) -> dict[str, Any]:
@@ -207,7 +232,7 @@ def build_tmux_status_snapshot(
     summary = summary_for_rows(rows, start_date, end_date)
 
     pricing_metadata = dataset_payload.get("pricing") or {}
-    warnings = filter_pricing_warnings(pricing_metadata, scope)
+    warnings = filter_pricing_warnings(pricing_metadata, scope, providers_payload, start_date, end_date)
     warning_count = len(warnings)
     pricing_complete = bool(summary["pricing_complete"]) and warning_count == 0
 

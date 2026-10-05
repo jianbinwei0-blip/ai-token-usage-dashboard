@@ -88,16 +88,19 @@ Environment variables:
 - `AI_USAGE_CODEX_BIN` (Codex executable used for the app-server account API; default: `codex`)
 - `AI_USAGE_CHATGPT_TIMEOUT_SECONDS` (overall account/quota request timeout; default: `3`)
 
-## GPT-6 Astra Pricing
+## Model Pricing
 
-The built-in rate card uses [OpenAI's GPT-6 Astra pricing](https://developers.openai.com/api/docs/models/gpt-6-astra), verified September 11, 2026. Standard short-context rates per million tokens are:
+The built-in rate card was verified against official sources on **October 1, 2026**. Rates are pinned to this verification date, not fetched automatically:
 
-- Input: **$10.00**
-- Output: **$50.00**
-- Cache reads: **$1.00**
-- Cache writes: **$12.50**
+- [OpenAI pricing](https://developers.openai.com/api/docs/pricing): GPT-6 Astra, GPT-6 Sol, GPT-6.1 Sol, GPT-6 Luna, and GPT-5.6 Sol/Terra/Luna, using Standard short-context rates. For example, GPT-6.1 Sol costs $2 input, $10 output, $0.10 cache reads, and $2.50 cache writes per million tokens. Astra remains $10 / $50 / $1 / $12.50, respectively.
+- [Claude pricing](https://platform.claude.com/docs/en/about-claude/pricing): Fable 5/5.1, Opus 5/5.5, Sonnet 5/5.5, Haiku 4.5, and explicit Opus 4.5–4.8 rates. Cache writes use the standard 5-minute TTL; 1-hour writes are not inferred.
+- [DeepSeek pricing](https://api-docs.deepseek.com/quick_start/pricing): `deepseek-flash` and its `deepseek-v4-flash`/`deepseek-v4-flash-vision-exp` aliases cost **$0.30 input, $1.20 output, and $0.006 cache reads** per million tokens at peak rates. `deepseek-v4-pro` costs $1.32 / $3.96 / $0.044, respectively. Cache writes use the cache-miss input rate, without an extra write premium. The [September 10 changelog](https://api-docs.deepseek.com/updates) confirms that legacy Flash aliases now route to V4.1 Flash.
 
-These rates apply to `gpt-6-astra` and its dated snapshots in Codex and PI, with DSH using the same fallback rates. Native PI costs and explicit pricing-file overrides retain precedence. Derived costs are estimates at these rates; they do not infer long-context premiums (over 272K input tokens per request), Batch/Flex discounts, Fast mode, or regional uplifts from session totals.
+DeepSeek off-peak rates are **half** the peak rates. Peak hours are 01:00–04:00 and 06:00–10:00 UTC on weekdays, excluding Chinese public holidays. The static rate card uses peak rates as a conservative estimate; it does not reconstruct hourly discounts, holidays, or historical price changes.
+
+OpenAI's current GPT-5.6 Sol promotional rates are guaranteed at least through November 21, 2026 and should be rechecked afterward.
+
+Native session costs and explicit pricing-file overrides retain precedence. OpenAI rates apply to Codex and PI, with DSH using the same fallback rates. Derived costs are estimates, not invoices: they do not infer long-context premiums (over 272K input tokens per request), Batch/Flex discounts, Fast/Ultrafast mode, regional uplifts, or historical rate changes from session totals. Unlisted legacy families may still use the existing coarse fallback rates; this is not an exhaustive model catalog.
 
 Pricing changes invalidate saved derived Codex costs on the next recalculation, including retained history whose source logs have been deleted, even when a pricing override keeps the same version.
 
@@ -121,6 +124,7 @@ Where:
 - the amount after the MTD token total is the locally derived month-to-date cost estimate, not an additional ChatGPT subscription charge
 - middle dots consistently separate plan, quota, token, and cost values
 - healthy status text is omitted; `partial`, `stale`, or `error` appears only when attention is needed
+- `partial` and the cost's `*` reflect incomplete pricing in the selected provider and date range; warnings from older usage, future-dated usage, or currently native-priced models do not affect the displayed range
 
 ### How it works
 

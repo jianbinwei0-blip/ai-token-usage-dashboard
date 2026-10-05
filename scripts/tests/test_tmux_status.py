@@ -179,6 +179,117 @@ class TmuxStatusTests(unittest.TestCase):
         self.assertEqual(snapshot["quality"]["warning_count"], 1)
         self.assertFalse(snapshot["quality"]["pricing_complete"])
 
+    def test_historical_and_future_pricing_warnings_do_not_affect_current_range(self) -> None:
+        rows = [
+            {
+                "date": "2026-09-18",
+                "total_tokens": 1_000,
+                "total_cost_usd": 0.0,
+                "cost_complete": False,
+                "breakdown_rows": [{"model": "legacy-model", "cost_complete": False}],
+            },
+            {
+                "date": "2026-10-01",
+                "total_tokens": 100,
+                "total_cost_usd": 1.0,
+                "cost_complete": True,
+                "breakdown_rows": [{"model": "legacy-model", "cost_complete": True}],
+            },
+            {
+                "date": "2026-10-02",
+                "total_tokens": 200,
+                "total_cost_usd": 0.0,
+                "cost_complete": False,
+                "breakdown_rows": [{"model": "future-model", "cost_complete": False}],
+            },
+        ]
+        dataset_payload = {
+            "generated_at": "2026-10-01T15:04:00+00:00",
+            "providers_available": {"dsh": True, "combined": True},
+            "pricing": {
+                "warnings": [
+                    {"provider": "dsh", "model": "legacy-model"},
+                    {"provider": "dsh", "model": "future-model"},
+                ]
+            },
+            "providers": {"combined": {"rows": rows}, "dsh": {"rows": rows}},
+        }
+        now = dt.datetime(2026, 10, 1, 15, 4, tzinfo=dt.timezone.utc)
+
+        for scope in ("combined", "dsh"):
+            for preset in ("mtd", "wtd", "last7"):
+                with self.subTest(scope=scope, preset=preset):
+                    snapshot = build_tmux_status_snapshot(
+                        dataset_payload, scope=scope, range_preset=preset, now=now,
+                    )
+                    self.assertEqual(snapshot["health"], "ok")
+                    self.assertEqual(snapshot["quality"]["warning_count"], 0)
+                    self.assertTrue(snapshot["quality"]["pricing_complete"])
+                    self.assertEqual(snapshot["metrics"]["range_tokens"], 100)
+                    self.assertEqual(snapshot["metrics"]["range_cost_usd"], 1.0)
+                    self.assertNotIn("partial", render_tmux_status(snapshot, now=now))
+                    self.assertNotIn("*", render_tmux_status(snapshot, now=now))
+
+            snapshot = build_tmux_status_snapshot(
+                dataset_payload, scope=scope, range_preset="all", now=now,
+            )
+            self.assertEqual(snapshot["health"], "partial")
+            self.assertEqual(snapshot["quality"]["warning_count"], 1)
+            self.assertFalse(snapshot["quality"]["pricing_complete"])
+            self.assertEqual(snapshot["metrics"]["range_tokens"], 1_100)
+
+    def test_current_warnings_match_only_unpriced_models_in_selected_provider(self) -> None:
+        partial_rows = [{
+            "date": "2026-10-01",
+            "total_tokens": 100,
+            "total_cost_usd": 1.0,
+            "cost_complete": False,
+            "breakdown_rows": [
+                {"model": "native-priced-model", "cost_complete": True},
+                {"model": "unpriced-model", "cost_complete": False},
+            ],
+        }]
+        dataset_payload = {
+            "generated_at": "2026-10-01T15:04:00+00:00",
+            "pricing": {
+                "warnings": [
+                    {"provider": "dsh", "model": "native-priced-model"},
+                    {"provider": "dsh", "model": "unpriced-model"},
+                ]
+            },
+            "providers": {
+                "combined": {"rows": partial_rows},
+                "dsh": {"rows": partial_rows},
+                "pi": {"rows": [{
+                    "date": "2026-10-01", "total_tokens": 50,
+                    "total_cost_usd": 0.5, "cost_complete": True,
+                }]},
+            },
+        }
+        now = dt.datetime(2026, 10, 1, 15, 4, tzinfo=dt.timezone.utc)
+
+        for scope, health, warning_count in (("combined", "partial", 1), ("dsh", "partial", 1), ("pi", "ok", 0)):
+            with self.subTest(scope=scope):
+                snapshot = build_tmux_status_snapshot(dataset_payload, scope=scope, now=now)
+                self.assertEqual(snapshot["health"], health)
+                self.assertEqual(snapshot["quality"]["warning_count"], warning_count)
+                self.assertEqual(snapshot["quality"]["pricing_complete"], health == "ok")
+
+    def test_incomplete_current_rows_remain_partial_without_warning_metadata(self) -> None:
+        dataset_payload = {
+            "generated_at": "2026-10-01T15:04:00+00:00",
+            "pricing": {"warnings": []},
+            "providers": {"combined": {"rows": [{
+                "date": "2026-10-01", "total_tokens": 100,
+                "total_cost_usd": 0.0, "cost_complete": False,
+            }]}},
+        }
+        snapshot = build_tmux_status_snapshot(
+            dataset_payload, now=dt.datetime(2026, 10, 1, 15, 4, tzinfo=dt.timezone.utc),
+        )
+        self.assertEqual(snapshot["health"], "partial")
+        self.assertFalse(snapshot["quality"]["pricing_complete"])
+
     def test_build_snapshot_uses_local_day_not_utc_day(self) -> None:
         pacific = dt.timezone(dt.timedelta(hours=-7))
         dataset_payload = {

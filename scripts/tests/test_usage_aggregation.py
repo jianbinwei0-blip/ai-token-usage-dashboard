@@ -279,10 +279,10 @@ class UsageAggregationTests(unittest.TestCase):
             self.assertEqual(totals[expected_day].total_tokens, 247)
             self.assertEqual(totals[expected_day].sessions, 2)
             self.assertTrue(totals[expected_day].cost_complete)
-            self.assertAlmostEqual(totals[expected_day].input_cost_usd, 0.0000308)
-            self.assertAlmostEqual(totals[expected_day].output_cost_usd, 0.002671)
-            self.assertAlmostEqual(totals[expected_day].cached_cost_usd, 0.00008624)
-            self.assertAlmostEqual(totals[expected_day].total_cost_usd, 0.00278804)
+            self.assertAlmostEqual(totals[expected_day].input_cost_usd, 0.000031)
+            self.assertAlmostEqual(totals[expected_day].output_cost_usd, 0.002675)
+            self.assertAlmostEqual(totals[expected_day].cached_cost_usd, 0.0000868)
+            self.assertAlmostEqual(totals[expected_day].total_cost_usd, 0.0027928)
 
             sonnet = totals[expected_day].breakdowns[("claude-code", "claude-sonnet-4-6")]
             self.assertEqual(sonnet.sessions, 1)
@@ -293,7 +293,7 @@ class UsageAggregationTests(unittest.TestCase):
             haiku = totals[expected_day].breakdowns[("claude-code", "claude-haiku-4-5-20251001")]
             self.assertEqual(haiku.sessions, 1)
             self.assertEqual(haiku.total_tokens, 10)
-            self.assertAlmostEqual(haiku.total_cost_usd, 0.00001904)
+            self.assertAlmostEqual(haiku.total_cost_usd, 0.0000238)
 
     def test_collect_claude_daily_totals_extracts_usage_attribution_dimensions(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -711,12 +711,14 @@ class UsageAggregationTests(unittest.TestCase):
             self.assertEqual(totals[usage_day].output_tokens, 11)
             self.assertEqual(totals[usage_day].cached_tokens, 12)
             self.assertEqual(totals[usage_day].total_tokens, 62)
-            self.assertFalse(totals[usage_day].cost_complete)
+            self.assertTrue(totals[usage_day].cost_complete)
+            self.assertAlmostEqual(totals[usage_day].total_cost_usd, 0.000226818, places=9)
 
             deepseek = totals[usage_day].breakdowns[("dsh", "deepseek-v4-flash")]
             self.assertEqual(deepseek.sessions, 1)
             self.assertEqual(deepseek.total_tokens, 23)
-            self.assertFalse(deepseek.cost_complete)
+            self.assertTrue(deepseek.cost_complete)
+            self.assertAlmostEqual(deepseek.total_cost_usd, 0.000011418, places=9)
 
             gpt = totals[usage_day].breakdowns[("dsh", "gpt-5.6-sol")]
             self.assertEqual(gpt.sessions, 1)
@@ -725,6 +727,7 @@ class UsageAggregationTests(unittest.TestCase):
             self.assertEqual(gpt.cached_tokens, 7)
             self.assertEqual(gpt.total_tokens, 39)
             self.assertTrue(gpt.cost_complete)
+            self.assertAlmostEqual(gpt.total_cost_usd, 0.0002154, places=9)
             self.assertEqual(activity[(usage_day, first_hour)].sessions, 1)
             self.assertEqual(activity[(usage_day, compaction_hour)].sessions, 1)
 
