@@ -515,8 +515,6 @@ def _quota_window_labels(duration_minutes: Any, kind: str) -> tuple[str, str]:
         minutes = int(duration_minutes)
     except (TypeError, ValueError, OverflowError):
         minutes = 0
-    if minutes == 300:
-        return "5h", "5h"
     if minutes == 10_080:
         return "Weekly", "7d"
     if minutes > 0 and minutes % 1_440 == 0:
@@ -580,13 +578,6 @@ def _quota_segment(
     if prefix:
         label = f"{prefix} {label}"
     reset_countdown = format_quota_reset_time(window.get("resets_at"), now)
-    if (
-        not reset_countdown
-        and bool(window.get("inferred"))
-        and remaining == 100
-        and window.get("window_duration_minutes") == 300
-    ):
-        reset_countdown = "now"
     remaining_text = f"{remaining}%" if compact else f"{remaining}% left"
     if reached:
         remaining_text += "!"
@@ -605,7 +596,7 @@ def _subscription_render_segments(
     subscription: Any,
     now: dt.datetime | None,
 ) -> dict[str, list[tuple[str, str]]]:
-    empty = {"full": [], "compact": [], "short": [], "minimum": [], "five_hour": []}
+    empty = {"full": [], "compact": [], "short": [], "minimum": [], "quota": []}
     state = subscription_effective_state(subscription, now)
     if state == "not_applicable" or not isinstance(subscription, dict):
         return empty
@@ -631,7 +622,7 @@ def _subscription_render_segments(
             "compact": [plan_segment, unavailable_segment],
             "short": [plan_segment],
             "minimum": [plan_segment],
-            "five_hour": [],
+            "quota": [],
         }
 
     canonical = next((limit for limit in limits if str(limit.get("id") or "").lower() == "codex"), limits[0])
@@ -640,12 +631,17 @@ def _subscription_render_segments(
     compact_segments = [plan_segment]
     short_segments = [plan_segment]
     minimum_segments = [plan_segment]
-    five_hour_segments: list[tuple[str, str]] = []
+    quota_segments: list[tuple[str, str]] = []
 
     canonical_windows: dict[str, dict[str, Any]] = {}
     for kind in ("primary", "secondary"):
         window = canonical.get(kind)
-        if not isinstance(window, dict) or _quota_remaining(window) is None:
+        # Ignore retired five-hour quotas, including legacy or inferred cache entries.
+        if (
+            not isinstance(window, dict)
+            or window.get("window_duration_minutes") == 300
+            or _quota_remaining(window) is None
+        ):
             continue
         canonical_windows[kind] = window
         full = _quota_segment(
@@ -666,7 +662,6 @@ def _subscription_render_segments(
             compact=True,
             include_reset=True,
         )
-        is_five_hour = window.get("window_duration_minutes") == 300
         short = _quota_segment(
             window,
             kind,
@@ -674,18 +669,17 @@ def _subscription_render_segments(
             stale=stale,
             reached=canonical_reached,
             compact=True,
-            include_reset=is_five_hour,
+            include_reset=False,
         )
         if full is not None:
             full_segments.append(full)
         if compact_value is not None:
             compact_segments.append(compact_value)
-            if is_five_hour:
-                five_hour_segments = [compact_value]
         if short is not None:
             short_segments.append(short)
             if len(minimum_segments) == 1:
                 minimum_segments.append(short)
+                quota_segments = [short]
 
     named_candidates: list[tuple[bool, int, str, str, dict[str, Any]]] = []
     for limit in limits:
@@ -696,7 +690,7 @@ def _subscription_render_segments(
         for kind in ("primary", "secondary"):
             window = limit.get(kind)
             remaining = _quota_remaining(window)
-            if remaining is None or not isinstance(window, dict):
+            if remaining is None or not isinstance(window, dict) or window.get("window_duration_minutes") == 300:
                 continue
             canonical_remaining = _quota_remaining(canonical_windows.get(kind))
             if reached or canonical_remaining is None or remaining < canonical_remaining:
@@ -753,7 +747,7 @@ def _subscription_render_segments(
                 balance = float(credits.get("balance"))
             except (TypeError, ValueError, OverflowError):
                 balance = 0.0
-            credit_value = str(int(round(balance))) if balance > 0 else ""
+            credit_value = f"{int(round(balance)):,}" if balance > 0 else ""
         if credit_value:
             credit_plain = f"Credits {credit_value}"
             credit_styled = tmux_style("Credits", fg=MUTED_COLOR) + " " + tmux_style(credit_value, fg=COST_OK_COLOR, bold=True)
@@ -772,7 +766,7 @@ def _subscription_render_segments(
         "compact": compact_segments,
         "short": short_segments,
         "minimum": minimum_segments,
-        "five_hour": five_hour_segments,
+        "quota": quota_segments,
     }
 
 
@@ -814,7 +808,7 @@ def render_tmux_status(
     subscription_tiers = (
         _subscription_render_segments(snapshot.get("subscription"), now)
         if scope in {"combined", "codex"}
-        else {"full": [], "compact": [], "short": [], "minimum": [], "five_hour": []}
+        else {"full": [], "compact": [], "short": [], "minimum": [], "quota": []}
     )
     subscription_groups = {
         tier: _subscription_group(segments)
@@ -896,7 +890,7 @@ def render_tmux_status(
         candidates = [
             [lead, subscription_groups["compact"], time_segment],
             [lead, subscription_groups["short"]],
-            [subscription_groups["five_hour"]],
+            [subscription_groups["quota"]],
             [lead],
             [ai_only],
         ]
@@ -911,7 +905,7 @@ def render_tmux_status(
             [lead, subscription_groups["short"], *local_short],
             [lead, subscription_groups["minimum"], *local_minimum],
             [lead, subscription_groups["minimum"]],
-            [subscription_groups["five_hour"]],
+            [subscription_groups["quota"]],
             [lead],
             [ai_only],
         ]
@@ -922,6 +916,8 @@ def render_tmux_status(
     selected_styled = ai_only[1]
     for candidate in candidates:
         pairs = [pair for pair in candidate if pair[0]]
+        if not pairs:
+            continue
         plain = separator_plain.join(pair[0] for pair in pairs)
         if max_width is None or len(plain) <= max_width:
             selected_plain = plain

@@ -463,40 +463,45 @@ class TmuxStatusTests(unittest.TestCase):
         self.assertEqual(subscription_effective_state(subscription, now=now), "ok")
         self.assertEqual(
             render_tmux_status(snapshot, now=now),
-            "GPT Pro Lite · 5h 88% left ↻2h 55m · Weekly 83% left ↻2d 17h 55m · Today 90.2M · MTD 562.4M · $13.4k · 15:04 → 15:05",
+            "GPT Pro Lite · Weekly 83% left ↻2d 17h 55m · Today 90.2M · MTD 562.4M · $13.4k · 15:04 → 15:05",
         )
 
-        compact = render_tmux_status(snapshot, now=now, max_width=96)
+        self.assertEqual(
+            render_tmux_status(snapshot, now=now, max_width=96),
+            render_tmux_status(snapshot, now=now),
+        )
+        compact = render_tmux_status(snapshot, now=now, max_width=80)
         self.assertEqual(
             compact,
-            "GPT Pro Lite · 5h 88% ↻2h 55m · 7d 83% ↻2d 17h 55m · Today 90.2M · MTD 562.4M · $13.4k",
+            "GPT Pro Lite · 7d 83% ↻2d 17h 55m · Today 90.2M · MTD 562.4M · $13.4k",
         )
-        self.assertLessEqual(len(compact), 96)
-        self.assertIn("5h 88% ↻2h 55m", compact)
+        self.assertLessEqual(len(compact), 80)
+        self.assertNotIn("5h", compact)
+        self.assertNotIn("2h 55m", compact)
         self.assertIn("7d 83% ↻2d 17h 55m", compact)
-        self.assertEqual(render_tmux_status(snapshot, now=now, max_width=16), "5h 88% ↻2h 55m")
+        self.assertEqual(render_tmux_status(snapshot, now=now, max_width=16), "7d 83%")
         self.assertNotIn(" I ", compact)
         self.assertNotIn(" O ", compact)
-        styled = render_tmux_status(snapshot, now=now, max_width=96, use_tmux_style=True)
+        styled = render_tmux_status(snapshot, now=now, max_width=80, use_tmux_style=True)
         self.assertIn("#[fg=#7EE787,bold]GPT#[default]", styled)
-        self.assertIn("#[fg=#7EE787,bold]88%#[default]", styled)
+        self.assertIn("#[fg=#7EE787,bold]83%#[default]", styled)
         self.assertIn("#[fg=#7EE787,bold]$13.4k#[default]", styled)
 
         low_limit = {
             **subscription["limits"][0],
-            "primary": {**subscription["limits"][0]["primary"], "remaining_percent": 40},
+            "secondary": {**subscription["limits"][0]["secondary"], "remaining_percent": 40},
         }
         low_subscription = {**subscription, "limits": [low_limit]}
         low_output = render_tmux_status({**snapshot, "subscription": low_subscription}, now=now, max_width=96)
-        self.assertIn("5h 40% ↻2h 55m", low_output)
+        self.assertIn("Weekly 40% left ↻2d 17h 55m", low_output)
 
         credited_limit = {
             **subscription["limits"][0],
-            "credits": {"has_credits": True, "unlimited": False, "balance": "25.4"},
+            "credits": {"has_credits": True, "unlimited": False, "balance": "62500.4"},
         }
         credited_subscription = {**subscription, "limits": [credited_limit]}
         credited = render_tmux_status({**snapshot, "subscription": credited_subscription}, now=now, max_width=96)
-        self.assertIn("Cr 25", credited)
+        self.assertIn("Cr 62,500", credited)
         self.assertIn("MTD 562.4M · $13.4k", credited)
 
         stale_subscription = {**subscription, "fetched_at": "2026-04-21T14:40:00+00:00"}
@@ -504,7 +509,7 @@ class TmuxStatusTests(unittest.TestCase):
         stale_output = render_tmux_status({**snapshot, "subscription": stale_subscription}, now=now, max_width=96)
         self.assertIn("GPT Pro Lite stale", stale_output)
 
-    def test_render_always_shows_inactive_five_hour_quota_and_reset_state(self) -> None:
+    def test_render_omits_active_and_inferred_five_hour_quota_at_every_width(self) -> None:
         now = dt.datetime(2026, 4, 21, 15, 5, tzinfo=dt.timezone.utc)
         snapshot = {
             "generated_at": "2026-04-21T15:04:00+00:00",
@@ -541,11 +546,43 @@ class TmuxStatusTests(unittest.TestCase):
             },
         }
 
-        for width in (96, 48, 16):
-            with self.subTest(width=width):
-                output = render_tmux_status(snapshot, now=now, max_width=width)
-                self.assertIn("5h 100% ↻now", output)
-                self.assertLessEqual(len(output), width)
+        for primary in (
+            snapshot["subscription"]["limits"][0]["primary"],
+            {
+                "remaining_percent": 88,
+                "window_duration_minutes": 300,
+                "resets_at": int((now + dt.timedelta(hours=2, minutes=55)).timestamp()),
+            },
+        ):
+            subscription = snapshot["subscription"]
+            limit = {**subscription["limits"][0], "primary": primary}
+            for scope in ("combined", "codex"):
+                for health in ("ok", "error"):
+                    for width in (None, 96, 48, 16, 3):
+                        for styled in (False, True):
+                            with self.subTest(primary=primary, scope=scope, health=health, width=width, styled=styled):
+                                current = {
+                                    **snapshot,
+                                    "scope": scope,
+                                    "health": health,
+                                    "subscription": {**subscription, "limits": [limit]},
+                                }
+                                plain = render_tmux_status(current, now=now, max_width=width)
+                                output = render_tmux_status(current, now=now, max_width=width, use_tmux_style=styled)
+                                self.assertNotIn("5h", output)
+                                self.assertNotIn("2h 55m", output)
+                                self.assertNotIn("↻now", output)
+                                self.assertTrue(plain)
+                                if width is not None:
+                                    self.assertLessEqual(len(plain), width)
+                                if width is None or width > 3:
+                                    self.assertTrue("Weekly 83%" in plain or "7d 83%" in plain)
+
+        five_hour_only = {
+            **snapshot,
+            "subscription": {**subscription, "limits": [{**limit, "secondary": None}]},
+        }
+        self.assertEqual(render_tmux_status(five_hour_only, now=now, max_width=16), "GPT Pro Lite")
 
     def test_render_includes_only_a_more_constrained_named_quota(self) -> None:
         now = dt.datetime(2026, 4, 21, 15, 5, tzinfo=dt.timezone.utc)
@@ -559,8 +596,8 @@ class TmuxStatusTests(unittest.TestCase):
         named = {
             "id": "codex_spark",
             "name": "GPT-5.3-Codex-Spark",
-            "primary": {"remaining_percent": 60, "window_duration_minutes": 300, "resets_at": reset},
-            "secondary": None,
+            "primary": {"remaining_percent": 5, "window_duration_minutes": 300, "resets_at": reset},
+            "secondary": {"remaining_percent": 60, "window_duration_minutes": 10_080, "resets_at": reset},
             "rate_limit_reached_type": None,
         }
         snapshot = {
@@ -581,13 +618,14 @@ class TmuxStatusTests(unittest.TestCase):
         }
 
         output = render_tmux_status(snapshot, now=now, max_width=96)
-        self.assertIn("Spark 5h 60%", output)
+        self.assertIn("Spark 7d 60%", output)
+        self.assertNotIn("5h", output)
         self.assertIn("MTD 200 · $3", output)
         self.assertLessEqual(len(output), 96)
 
         unconstrained_named = {
             **named,
-            "primary": {"remaining_percent": 100, "window_duration_minutes": 300, "resets_at": reset},
+            "secondary": {"remaining_percent": 100, "window_duration_minutes": 10_080, "resets_at": reset},
         }
         unconstrained = {
             **snapshot,
