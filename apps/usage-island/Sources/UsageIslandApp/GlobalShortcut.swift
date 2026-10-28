@@ -3,6 +3,10 @@ import Carbon
 
 @MainActor
 final class GlobalShortcut {
+    static let displayName = "Command–Control–U"
+    static let keyCode = UInt32(kVK_ANSI_U)
+    static let modifiers = UInt32(cmdKey | controlKey)
+
     private var handler: EventHandlerRef?
     private var hotKey: EventHotKeyRef?
     let action: () -> Void
@@ -26,7 +30,7 @@ final class GlobalShortcut {
         guard handlerStatus == noErr else { return false }
         let id = EventHotKeyID(signature: 0x41495549, id: 1)
         let status = RegisterEventHotKey(
-            UInt32(kVK_ANSI_U), UInt32(controlKey | optionKey), id,
+            Self.keyCode, Self.modifiers, id,
             GetApplicationEventTarget(), 0, &hotKey
         )
         if status != noErr {

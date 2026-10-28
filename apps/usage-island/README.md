@@ -5,7 +5,7 @@ A small native macOS companion for [AI Token Usage Dashboard](../../README.md), 
 ## Use
 
 - Click the floating summary, either notch wing, or the menu-bar chart icon to expand.
-- **Control–Option–U** toggles details globally. **Escape** collapses the focused panel.
+- **Command–Control–U (`⌃⌘U`)** toggles details globally. **Escape** collapses the focused panel.
 - Right-click the menu-bar icon, or use **…** in the detail panel, for options.
 - **Display** selects the main display automatically or a specific connected screen. A disconnected selection falls back to the main display.
 - **Refresh** updates the view using the collector's five-minute cache. It does not force an extra collection.
@@ -69,7 +69,7 @@ Overrides: `AI_USAGE_DASHBOARD_DIR`, `AI_USAGE_CACHE_FILE`, `AI_USAGE_PYTHON`, a
 
 ## Diagnostics and UI smoke checks
 
-Presentation state: `~/Library/Caches/AIUsageIsland/presentation.json`. It records status and display selection, not transcripts or credentials.
+Presentation state: `~/Library/Caches/AIUsageIsland/presentation.json`. It records status, display selection, and the registered shortcut's name/key code/modifiers, not transcripts or credentials.
 
 ```sh
 ./scripts/smoke.sh

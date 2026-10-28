@@ -298,7 +298,7 @@ final class IslandController: NSObject {
             menu.addItem(item)
         }
         item(model.isExpanded ? "Collapse details" : "Show details", #selector(toggleDetails))
-        let shortcutInfo = NSMenuItem(title: shortcutRegistered ? "Shortcut: Control–Option–U" :
+        let shortcutInfo = NSMenuItem(title: shortcutRegistered ? "Shortcut: \(GlobalShortcut.displayName)" :
                                         "Shortcut unavailable; use the menu-bar button",
                                      action: nil, keyEquivalent: "")
         shortcutInfo.isEnabled = false
@@ -341,6 +341,9 @@ final class IslandController: NSObject {
             "expanded": model.isExpanded,
             "hardware_notch": model.hasHardwareNotch,
             "shortcut_registered": shortcutRegistered,
+            "shortcut": GlobalShortcut.displayName,
+            "shortcut_key_code": Int(GlobalShortcut.keyCode),
+            "shortcut_modifiers": Int(GlobalShortcut.modifiers),
             "health": model.health,
             "status": model.status,
             "generated_at": model.snapshot?.generatedAt ?? "",
@@ -430,7 +433,7 @@ final class IslandController: NSObject {
                 checks.append("return to original display")
             }
             try verify(shortcutRegistered, "global shortcut registration")
-            checks.append("Control-Option-U registered without Accessibility permission")
+            checks.append("\(GlobalShortcut.displayName) registered without Accessibility permission")
             writeSmokeReport(directory: directory, checks: checks, error: nil)
         } catch {
             writeSmokeReport(directory: directory, checks: checks, error: error.localizedDescription)

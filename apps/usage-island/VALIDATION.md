@@ -27,7 +27,7 @@ The unlocked in-app smoke check passed on the connected Studio Display and physi
 - Hide/show destroys and recreates the panel.
 - Hardware-notch compact and expanded layouts, with content on either side of the cutout.
 - Return to the original display.
-- Control–Option–U registration succeeds without requesting Accessibility access.
+- Global hotkey registration succeeds without requesting Accessibility access. The current binding is Command–Control–U.
 
 Inspected four own-view PNG captures. Fixed a truncated Today caption and replaced the floating material's gray appearance with the existing charcoal palette. The checked captures are retained locally in `.artifacts/validation/` and are gitignored because they contain usage amounts.
 
@@ -65,6 +65,16 @@ The initial release report is `.artifacts/validation/final-release.json`. Earlie
 - Inspected the offscreen expanded-view preview: available count, both local expiration dates/time zones, and the relabelled Weekly reset are readable without clipping. This renders the real SwiftUI details view without creating a visible window or changing focus.
 - The Mac was locked during the installation smoke check. Cache loading, offscreen rendering and hidden-window privacy passed; interactive checks were explicitly skipped. No reset-consumption action was added or called.
 - Private evidence is retained under `.artifacts/reset-expirations-*/`, which remains gitignored. Tests use synthetic timestamps, not live account data.
+
+## Command–Control–U shortcut (v0.2.1)
+
+- No enabled match was found among 230 effective macOS symbolic-hotkey entries. On-disk symbolic settings, custom menu/Services shortcuts and 233 standard Cocoa text bindings also showed no match.
+- Inspected configured Karabiner, Rex, Ghostty, Cursor and Chrome extension bindings, plus relevant utility shortcut preferences. No Command–Control–U assignment was found in those settings. No other application's configuration was changed.
+- A temporary Carbon registration of the new combination succeeded and was immediately released. No keypress was injected. Carbon permits shared registrations (the existing island binding could also be temporarily registered), so this probe confirms registration availability, not exclusive ownership or the absence of every other binding.
+- App-local menus and global event-tap bindings are not exhaustively enumerable by these checks. The probe had no Accessibility permission; none was requested or granted. Treat the result as no conflict found, not a universal conflict-free guarantee.
+- The app centralizes the shortcut name, key code and modifiers. Tooltips, menu text and smoke reports use that definition.
+- Built and installed v0.2.1. Its live diagnostics report successful registration, virtual key code 32 and Carbon modifier mask 4352 (Command + Control, without Option).
+- All 105 automated checks and the full unlocked presentation smoke check passed. Physical global-key dispatch was not synthesized; registration and installed parameters were verified without triggering another application's commands.
 
 ## Remaining coverage limits
 

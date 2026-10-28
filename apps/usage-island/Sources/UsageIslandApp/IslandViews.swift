@@ -67,7 +67,7 @@ struct FloatingSummaryView: View {
         }
         .buttonStyle(.plain)
         .accessibilityLabel("Show usage details. Today \(model.today) tokens. Weekly \(model.weekly) remaining. \(model.status).")
-        .help("Show usage details (Control–Option–U). " + model.status)
+        .help("Show usage details (\(GlobalShortcut.displayName)). " + model.status)
     }
 
     private func compactValue(_ title: String, value: String, tone: String = "text") -> some View {
@@ -106,7 +106,7 @@ struct NotchSummaryView: View {
         .buttonStyle(.plain)
         .accessibilityLabel(leading ? "Show usage details. Today \(model.today) tokens. \(model.status)." :
                             "Show usage details. Weekly \(model.weekly) remaining. \(model.status).")
-        .help("Show usage details (Control–Option–U)")
+        .help("Show usage details (\(GlobalShortcut.displayName))")
         .preferredColorScheme(.dark)
     }
 }

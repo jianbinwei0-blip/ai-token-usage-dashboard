@@ -20,7 +20,7 @@ Expanded: a roughly 420pt-wide panel, with a title and collapse control; a subsc
 
 ## Interaction
 
-Click compact summary or menu-bar icon to toggle details. Control-Option-U offers a global shortcut; menu actions remain available if registration fails. Escape collapses. Refresh uses the existing collector's cache, never forces an extra scan. Open Dashboard opens the existing local dashboard URL. No hover-only actions, auto-expansion, permission prompts or refresh notifications.
+Click compact summary or menu-bar icon to toggle details. Command-Control-U offers a global shortcut; menu actions remain available if registration fails. Escape collapses. Refresh uses the existing collector's cache, never forces an extra scan. Open Dashboard opens the existing local dashboard URL. No hover-only actions, auto-expansion, permission prompts or refresh notifications.
 
 ## Motion and states
 
