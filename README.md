@@ -18,10 +18,12 @@ Supports Codex, Claude, PI Coding Agent, and DeepSeek Harness.
 - Horizontal bar chart (with rank, total tokens, and session count) above the table
 - Auto-recalc on browser refresh and every 5 minutes via local `localhost` endpoint
 - Compact tmux status rendering for Today/MTD total tokens, MTD cost, and ChatGPT subscription quota/reset information via `scripts/render_tmux_status.py`, aligned to 5-minute refresh boundaries
+- Native macOS usage island with compact/expanded layouts, quota/credits, token and cost totals, refresh status, RAM and disk, powered by the same collector and formatter
 
 ## Project Structure
 
 - `dashboard/index.html`: Dashboard UI
+- `apps/usage-island/`: Native macOS DynamicNotchKit app, bundled adapter, checks and packaging scripts
 - `scripts/ai_usage_recalc_server.py`: Thin local HTTP recalc service (`/health`, `/recalc`)
 - `scripts/dashboard_core/config.py`: Runtime config/env resolution
 - `scripts/dashboard_core/chatgpt_subscription.py`: Credential-safe Codex app-server adapter for ChatGPT plan and quota data
@@ -161,6 +163,23 @@ Show only native DeepSeek Harness usage:
 python3 scripts/render_tmux_status.py --scope dsh --chatgpt-usage off --max-width 96
 ```
 
+## Native macOS Usage Island
+
+[AI Usage Island](apps/usage-island/README.md) provides a native top-centre summary on external displays and a hardware-notch layout on supported MacBooks. Click to expand Today/MTD tokens, estimated cost, plan/quota/reset, credits and system-resource details. Control–Option–U toggles details; Escape collapses them.
+
+From the repository root:
+
+```bash
+cd apps/usage-island
+./scripts/check.sh
+./scripts/package.sh
+./scripts/install.sh
+```
+
+The app requires macOS 14+, Swift 6 build tools and Python 3. It bundles this repository's canonical formatter at build time and uses the existing five-minute collector cache and lock. It can refresh independently of tmux and has no SketchyBar dependency. Its installer leaves login startup opt-in.
+
+Build outputs and local usage screenshots are ignored and must not be committed. See the [app README](apps/usage-island/README.md) for display selection, SDK setup, runtime paths and diagnostics.
+
 ## Optional: Run as LaunchAgent (macOS)
 
 1. Copy and edit the template:
@@ -207,6 +226,12 @@ Run the full local harness checks:
 
 ```bash
 python3 -m unittest discover -s scripts/tests
+```
+
+For the native macOS app, also run:
+
+```bash
+apps/usage-island/scripts/check.sh
 ```
 
 ## Use as a Codex Skill

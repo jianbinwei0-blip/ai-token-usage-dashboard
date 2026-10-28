@@ -15,6 +15,7 @@ Use this skill to maintain a local token-usage dashboard that:
 
 Primary files:
 - `dashboard/index.html`: dashboard UI and client-side behavior
+- `apps/usage-island/`: native macOS usage island, adapter, checks and packaging
 - `scripts/ai_usage_recalc_server.py`: `/health` and `/recalc` HTTP entrypoint
 - `scripts/dashboard_core/pipeline.py`: recalc orchestration logic
 - `scripts/dashboard_core/collectors.py`: provider ingestion
@@ -40,12 +41,13 @@ Primary files:
 
 1. Confirm service is running (`/health`).
 2. Trigger `/recalc` before reviewing token numbers.
-3. Make UI changes in `dashboard/index.html`.
+3. Make web UI changes in `dashboard/index.html`; native island changes belong in `apps/usage-island/`.
 4. Make aggregation/range logic changes in `scripts/ai_usage_recalc_server.py` only when server-side totals must change.
 5. Validate with:
    - `python3 -m unittest discover -s scripts/tests` passes
    - `curl -s http://127.0.0.1:8765/recalc` returns JSON containing `"ok": true`
    - Dashboard reflects requested UI/number updates after refresh.
+   - For native app changes, run `apps/usage-island/scripts/check.sh`; its build preparation bundles the canonical formatter from `scripts/dashboard_core/tmux_status.py`.
 
 ## Data/Behavior Notes
 
@@ -74,5 +76,6 @@ Primary files:
 ## Guardrails
 
 - Preserve existing functionality unless the user explicitly requests behavior changes.
+- Keep local usage screenshots, runtime caches, logs and compiled app bundles out of commits; the native app's `.artifacts/`, `.build/` and `dist/` are ignored.
 - Keep number formatting user-friendly (`toLocaleString("en-US")` for display).
 - Prefer small, targeted UI edits over broad redesigns for dashboard maintenance requests.

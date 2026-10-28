@@ -1,0 +1,9 @@
+.build/
+.swiftpm/
+dist/
+.artifacts/
+# Generated from the repository's canonical formatter before checks/builds.
+/Sources/UsageIslandApp/Resources/Bridge/dashboard_status_formatter.py
+__pycache__/
+*.pyc
+.DS_Store
