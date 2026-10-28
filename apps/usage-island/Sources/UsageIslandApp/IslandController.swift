@@ -369,6 +369,8 @@ final class IslandController: NSObject {
             try await settle()
             try verify(model.snapshot != nil, "bundled adapter response")
             checks.append("bundled adapter decoded the local cache")
+            try captureExpandedPreview(to: directory.appendingPathComponent("expanded-preview.png"))
+            checks.append("expanded details rendered offscreen without changing window visibility")
             if sessionRequiresSuspension {
                 try verify(suspended && island.windowController == nil, "locked-session startup hides the window")
                 checks.append("launch while locked keeps the island hidden")
@@ -452,6 +454,26 @@ final class IslandController: NSObject {
             throw NSError(domain: "UsageIslandSmoke", code: 2,
                           userInfo: [NSLocalizedDescriptionKey: "Failed: " + name])
         }
+    }
+
+    private func captureExpandedPreview(to path: URL) throws {
+        // Render only our own SwiftUI view. This never creates an on-screen
+        // window, changes focus or weakens the lock-screen suspension policy.
+        let renderer = ImageRenderer(content:
+            ExpandedUsageView(model: model)
+                .foregroundStyle(IslandPalette.text)
+                .padding(15)
+                .background(IslandPalette.surface)
+                .environment(\.colorScheme, .dark)
+                .fixedSize()
+        )
+        renderer.scale = 2
+        guard let image = renderer.cgImage,
+              let png = NSBitmapImageRep(cgImage: image).representation(using: .png, properties: [:]) else {
+            throw NSError(domain: "UsageIslandSmoke", code: 5,
+                          userInfo: [NSLocalizedDescriptionKey: "Cannot render expanded preview"])
+        }
+        try png.write(to: path)
     }
 
     private func capture(to path: URL) throws {

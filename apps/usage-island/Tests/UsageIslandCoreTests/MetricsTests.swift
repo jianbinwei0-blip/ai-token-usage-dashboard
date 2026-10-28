@@ -27,6 +27,12 @@ private func snapshot(_ text: String = fixture) throws -> UsageSnapshot {
     try UsageSnapshot.decode(Data(text.utf8))
 }
 
+private func snapshotWithResets(_ resets: [String: Any]) throws -> UsageSnapshot {
+    var object = try JSONSerialization.jsonObject(with: Data(fixture.utf8)) as! [String: Any]
+    object["reset_credits"] = resets
+    return try UsageSnapshot.decode(JSONSerialization.data(withJSONObject: object))
+}
+
 @main
 enum CoreChecks {
     static func main() async {
@@ -37,6 +43,59 @@ enum CoreChecks {
                 try check(value.compactWeekly == "99%", "Quota changed")
                 try check(value.providers == ["codex", "claude", "pi", "dsh"], "Scope changed")
                 try check(value.field("cost") == nil, "Missing cost invented")
+            }),
+            ("reset metadata is optional for legacy caches", {
+                let legacy = try snapshot()
+                try check(legacy.resetCredits == nil, "Legacy bridge compatibility")
+                let value = try snapshotWithResets([
+                    "available_count": 5, "details_complete": false,
+                    "expirations": [["count": 2, "expires_at": 1_900_000_000, "does_not_expire": false]]
+                ])
+                try check(value.resetCredits?.availableCount == 5, "Do not derive total from capped rows")
+                try check(value.resetCredits?.completenessNote?.contains("2 of 5") == true, "Capped details need a label")
+                try check(value.field("today")?.value == "8.6M", "Reset details changed token totals")
+            }),
+            ("zero resets, unavailable dates and no expiration are distinct", {
+                let zero = try snapshotWithResets(["available_count": 0, "expirations": [], "details_complete": true])
+                try check(zero.resetCredits?.availableCount == 0, "Known zero is not unknown")
+                try check(zero.resetCredits?.completenessNote == nil, "No dates needed for zero resets")
+                let value = try snapshotWithResets([
+                    "available_count": 2, "details_complete": true,
+                    "expirations": [
+                        ["count": 1, "expires_at": NSNull(), "does_not_expire": true],
+                        ["count": 1, "expires_at": NSNull(), "does_not_expire": false],
+                    ]
+                ])
+                let entries = value.resetCredits!.expirations!
+                try check(entries[0].formattedExpiration() == "No expiration", "Explicit null means no expiration")
+                try check(entries[1].formattedExpiration() == "Not reported", "Missing dates must not become never")
+                let missing = try snapshotWithResets([
+                    "available_count": 2, "expirations": NSNull(), "details_complete": false
+                ])
+                try check(missing.resetCredits?.completenessNote == "Expiration dates are unavailable.", "Missing detail warning")
+            }),
+            ("reset expiry uses local time and the date's daylight-saving offset", {
+                let summer = Int64(UsageSnapshot.date("2030-06-01T12:00:00Z")!.timeIntervalSince1970)
+                let winter = Int64(UsageSnapshot.date("2030-12-01T12:00:00Z")!.timeIntervalSince1970)
+                let value = try snapshotWithResets([
+                    "available_count": 2, "details_complete": true,
+                    "expirations": [
+                        ["count": 1, "expires_at": summer, "does_not_expire": false],
+                        ["count": 1, "expires_at": winter, "does_not_expire": false],
+                    ]
+                ])
+                let entries = value.resetCredits!.expirations!
+                let locale = Locale(identifier: "en_US")
+                let zone = TimeZone(identifier: "America/Los_Angeles")!
+                let first = entries[0].formattedExpiration(locale: locale, timeZone: zone)
+                let last = entries[1].formattedExpiration(locale: locale, timeZone: zone)
+                try check(first.contains("2030") && first.contains("5:00") && first.contains("PDT"), first)
+                try check(last.contains("2030") && last.contains("4:00") && last.contains("PST"), last)
+                let boundary = Date(timeIntervalSince1970: TimeInterval(summer))
+                try check(!entries[0].hasExpired(at: boundary.addingTimeInterval(-1)), "Before expiry")
+                try check(entries[0].hasExpired(at: boundary), "At expiry")
+                try check(value.resetCredits!.hasExpiredEntries(at: boundary), "Expired cached entries need a warning")
+                try check(value.resetCredits?.availableCount == 2, "Never silently rewrite the last reported count")
             }),
             ("reject unsupported schema and duplicate fields", {
                 for text in [

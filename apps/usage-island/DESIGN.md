@@ -16,7 +16,7 @@ Use installed JetBrains Mono Regular for values at 13pt, matching the existing s
 
 Collapsed floating presentation: one concise row with Today tokens and Weekly remaining, plus a visible disclosure affordance. A warning indicator replaces decorative accents if data is stale or unavailable. On a notched display, use separate leading and trailing summaries outside the cutout.
 
-Expanded: a roughly 420pt-wide panel, with a title and collapse control; a subscription section for plan, weekly remaining, reset and credits; a separated usage section for Today, MTD and estimated cost; then collection timing and RAM/disk. Use rows and separators, not nested cards. Preserve unusual model-specific quota fields rather than dropping them. Explain incomplete pricing and estimated cost in a quiet footer.
+Expanded: a roughly 420pt-wide panel, with a title and collapse control; a subscription section for plan, weekly remaining, weekly reset, credits and available reset credits with their local expiration dates; a separated usage section for Today, MTD and estimated cost; then collection timing and RAM/disk. Use rows and separators, not nested cards. Preserve unusual model-specific quota fields rather than dropping them. Group resets by expiration, distinguish no expiration from unknown dates, and keep long expiration lists scrollable without enlarging the whole panel. Explain incomplete pricing and estimated cost in a quiet footer.
 
 ## Interaction
 

@@ -23,6 +23,7 @@ from dashboard_core.tmux_status import (  # noqa: E402
 from render_tmux_status import (  # noqa: E402
     parse_args as parse_tmux_status_args,
     refresh_subscription_snapshot,
+    snapshot_is_fresh,
 )
 
 
@@ -641,6 +642,8 @@ class TmuxStatusTests(unittest.TestCase):
             "account_type": "chatgpt",
             "plan": "plus",
             "limits": [{"id": "codex", "primary": {"remaining_percent": 75}}],
+            "reset_credits_available": 2,
+            "reset_credit_expirations": [{"count": 2, "expires_at": 1_900_000_000, "does_not_expire": False}],
         }
         attempted_at = dt.datetime(2026, 4, 21, 15, 10, tzinfo=dt.timezone.utc)
         with mock.patch("render_tmux_status.fetch_chatgpt_subscription_usage", side_effect=RuntimeError("offline")):
@@ -655,6 +658,41 @@ class TmuxStatusTests(unittest.TestCase):
         self.assertEqual(fallback["fetched_at"], "2026-04-21T15:00:00+00:00")
         self.assertEqual(fallback["last_attempted_at"], "2026-04-21T15:10:00+00:00")
         self.assertNotIn("offline", str(fallback))
+        self.assertEqual(fallback["version"], 3)
+        self.assertEqual(fallback["reset_credits_available"], 2)
+        self.assertEqual(fallback["reset_credit_expirations"], previous_subscription["reset_credit_expirations"])
+
+    def test_subscription_schema_upgrade_refreshes_reset_details_once(self) -> None:
+        now = dt.datetime(2030, 6, 1, 12, 0, tzinfo=dt.timezone.utc)
+        snapshot = {
+            "version": 3, "generated_at": now.isoformat(), "health": "ok",
+            "scope": "combined", "range": {"preset": "mtd"}, "subscription_enabled": True,
+            "subscription": {"version": 2, "state": "ok", "reset_credits_available": 2},
+        }
+        args = dict(scope="combined", range_preset="mtd", refresh_interval_minutes=5)
+        with mock.patch("render_tmux_status.effective_now", return_value=now):
+            self.assertFalse(snapshot_is_fresh(snapshot, **args))
+            snapshot["subscription"] = {
+                "version": 3, "state": "ok", "reset_credits_available": 2,
+                "reset_credit_expirations": None,
+            }
+            # Unsupported/capped metadata must not trigger a refetch loop.
+            self.assertTrue(snapshot_is_fresh(snapshot, **args))
+
+    def test_upgrade_preserves_legacy_count_without_inventing_dates(self) -> None:
+        previous = {
+            "version": 2, "state": "ok", "account_type": "chatgpt",
+            "fetched_at": "2030-06-01T12:00:00+00:00", "reset_credits_available": 2,
+            "limits": [{"id": "codex", "primary": {"remaining_percent": 75}}],
+        }
+        with mock.patch("render_tmux_status.fetch_chatgpt_subscription_usage", side_effect=RuntimeError("offline")):
+            fallback = refresh_subscription_snapshot(
+                {"subscription": previous}, codex_binary="unused", timeout_seconds=1,
+                now=dt.datetime(2030, 6, 1, 12, 1, tzinfo=dt.timezone.utc),
+            )
+        self.assertEqual(fallback["state"], "stale")
+        self.assertEqual(fallback["reset_credits_available"], 2)
+        self.assertIsNone(fallback["reset_credit_expirations"])
 
     def test_age_formatter(self) -> None:
         now = dt.datetime(2026, 4, 21, 15, 5, tzinfo=dt.timezone.utc)

@@ -110,6 +110,75 @@ class ChatgptSubscriptionTests(unittest.TestCase):
         self.assertEqual(result["limits"][1]["name"], "GPT-5.3-Codex-Spark")
         self.assertNotIn("private@example.com", json.dumps(result))
 
+    def test_groups_available_reset_expirations_and_drops_private_metadata(self) -> None:
+        credits = [
+            {"id": "private-b", "status": "available", "expiresAt": 1_900_500_000, "title": "private title"},
+            {"id": "private-a", "status": "available", "expiresAt": 1_900_000_000, "description": "private description"},
+            {"id": "private-c", "status": "available", "expiresAt": 1_900_000_000},
+            {"id": "private-c", "status": "available", "expiresAt": 1_900_000_000},
+            {"id": "private-d", "status": "redeemed", "expiresAt": 1_900_000_000},
+            {"id": "private-e", "status": "redeeming", "expiresAt": 1_900_000_000},
+            {"id": "private-f", "status": "unknown", "expiresAt": 1_900_000_000},
+        ]
+        result = normalize_chatgpt_subscription_usage(
+            {"account": {"type": "chatgpt", "planType": "pro"}},
+            {"rateLimitResetCredits": {"availableCount": 3, "credits": credits}},
+        )
+        self.assertEqual(result["version"], 3)
+        self.assertEqual(result["reset_credits_available"], 3)
+        self.assertEqual(result["reset_credit_expirations"], [
+            {"expires_at": 1_900_000_000, "does_not_expire": False, "count": 2},
+            {"expires_at": 1_900_500_000, "does_not_expire": False, "count": 1},
+        ])
+        self.assertNotIn("private-", json.dumps(result))
+        self.assertNotIn("private title", json.dumps(result))
+        self.assertNotIn("private description", json.dumps(result))
+
+    def test_reset_count_is_authoritative_when_details_are_capped(self) -> None:
+        result = normalize_chatgpt_subscription_usage(
+            {"account": {"type": "chatgpt"}},
+            {"rateLimitResetCredits": {"availableCount": 5, "credits": [
+                {"status": "available", "expiresAt": 1_900_000_000},
+            ]}},
+        )
+        self.assertEqual(result["reset_credits_available"], 5)
+        self.assertEqual(sum(entry["count"] for entry in result["reset_credit_expirations"]), 1)
+
+    def test_missing_empty_and_non_expiring_reset_details_are_distinct(self) -> None:
+        account = {"account": {"type": "chatgpt"}}
+        for credit_payload in ({"availableCount": 2}, {"availableCount": 2, "credits": None}):
+            result = normalize_chatgpt_subscription_usage(account, {"rateLimitResetCredits": credit_payload})
+            self.assertEqual(result["reset_credits_available"], 2)
+            self.assertIsNone(result["reset_credit_expirations"])
+        empty = normalize_chatgpt_subscription_usage(account, {"rateLimitResetCredits": {"availableCount": 0, "credits": []}})
+        self.assertEqual(empty["reset_credits_available"], 0)
+        self.assertEqual(empty["reset_credit_expirations"], [])
+        result = normalize_chatgpt_subscription_usage(account, {"rateLimitResetCredits": {
+            "availableCount": 3, "credits": [
+                {"status": "available", "expiresAt": None},
+                {"status": "available"},
+                {"status": "available", "expiresAt": "not-a-date"},
+            ],
+        }})
+        self.assertEqual(result["reset_credit_expirations"], [
+            {"expires_at": None, "does_not_expire": True, "count": 1},
+            {"expires_at": None, "does_not_expire": False, "count": 2},
+        ])
+
+    def test_invalid_reset_counts_and_dates_are_not_fabricated(self) -> None:
+        account = {"account": {"type": "chatgpt"}}
+        for value in (True, -1, 2.5, "invalid", 2**64):
+            result = normalize_chatgpt_subscription_usage(account, {"rateLimitResetCredits": {"availableCount": value}})
+            self.assertIsNone(result["reset_credits_available"], value)
+        result = normalize_chatgpt_subscription_usage(account, {"rateLimitResetCredits": {
+            "availableCount": 5, "credits": [
+                {"status": "available", "expiresAt": value} for value in (False, -1, 0, 1_900_000_000_000, 2.5)
+            ],
+        }})
+        self.assertEqual(result["reset_credit_expirations"], [
+            {"expires_at": None, "does_not_expire": False, "count": 5},
+        ])
+
     def test_clamps_percentages_and_rejects_invalid_windows(self) -> None:
         account = {"account": {"type": "chatgpt", "planType": "plus"}}
         rate_limits = {

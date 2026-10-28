@@ -140,6 +140,80 @@ class BridgeTests(unittest.TestCase):
         self.assertIn("limits", result["text"])
         json.dumps(result, allow_nan=False)
 
+    def test_reset_detail_payload_preserves_counts_and_old_metrics(self):
+        before = self.result()["fields"]
+        self.snapshot["subscription"].update(
+            reset_credits_available=3,
+            reset_credit_expirations=[
+                {"count": 2, "expires_at": 1_900_000_000, "does_not_expire": False},
+                {"count": 1, "expires_at": None, "does_not_expire": True},
+            ],
+        )
+        result = self.result()
+        self.assertEqual(result["fields"], before)
+        self.assertEqual(result["reset_credits"], {
+            "available_count": 3, "details_complete": True,
+            "expirations": [
+                {"count": 2, "expires_at": 1_900_000_000, "does_not_expire": False},
+                {"count": 1, "expires_at": None, "does_not_expire": True},
+            ],
+        })
+
+    def test_legacy_capped_and_zero_reset_metadata_are_distinct(self):
+        subscription = self.snapshot["subscription"]
+        subscription["reset_credits_available"] = 5
+        legacy = self.result()["reset_credits"]
+        self.assertEqual(legacy["available_count"], 5)
+        self.assertIsNone(legacy["expirations"])
+        self.assertFalse(legacy["details_complete"])
+        subscription["reset_credit_expirations"] = [{"count": 1, "expires_at": 1_900_000_000}]
+        capped = self.result()["reset_credits"]
+        self.assertEqual(capped["available_count"], 5)
+        self.assertFalse(capped["details_complete"])
+        subscription.update(reset_credits_available=0, reset_credit_expirations=[])
+        self.assertEqual(self.result()["reset_credits"], {
+            "available_count": 0, "expirations": [], "details_complete": True,
+        })
+
+    def test_reset_details_follow_account_and_scope_availability(self):
+        self.snapshot["subscription"]["reset_credits_available"] = 2
+        self.snapshot["scope"] = "claude"
+        self.assertIsNone(self.result()["reset_credits"])
+        self.snapshot["scope"] = "combined"
+        self.snapshot["subscription"]["account_type"] = "apiKey"
+        self.assertIsNone(self.result()["reset_credits"])
+
+    def test_reset_metadata_is_sanitized_without_breaking_token_totals(self):
+        self.snapshot["subscription"].update(
+            reset_credits_available=True,
+            reset_credit_expirations=[
+                None, {"count": -1}, {"count": True},
+                {"count": 1, "expires_at": -5, "does_not_expire": True, "id": "private-id"},
+                {"count": 1, "expires_at": None, "does_not_expire": True},
+            ],
+        )
+        result = self.result()
+        info = result["reset_credits"]
+        self.assertIsNone(info["available_count"])
+        self.assertEqual(info["expirations"], [
+            {"count": 1, "expires_at": None, "does_not_expire": False},
+            {"count": 1, "expires_at": None, "does_not_expire": True},
+        ])
+        self.assertNotIn("private-id", json.dumps(result))
+        self.assertTrue(any(field["key"] == "today" for field in result["fields"]))
+
+    def test_stale_reset_metadata_keeps_its_original_dates_and_timestamp(self):
+        subscription = self.snapshot["subscription"]
+        subscription.update(
+            state="stale", reset_credits_available=2,
+            reset_credit_expirations=[{"count": 2, "expires_at": 1_900_000_000, "does_not_expire": False}],
+        )
+        result = self.result()
+        self.assertEqual(result["subscription_state"], "stale")
+        self.assertEqual(result["subscription_fetched_at"], subscription["fetched_at"])
+        self.assertEqual(result["reset_credits"]["available_count"], 2)
+        self.assertEqual(result["reset_credits"]["expirations"][0]["expires_at"], 1_900_000_000)
+
     def test_collector_reuses_same_cache_scope_and_five_minute_schedule(self):
         with patch.object(bridge, "run_command", return_value=(0, "GPT Pro")) as run:
             self.assertTrue(bridge.refresh_cache())

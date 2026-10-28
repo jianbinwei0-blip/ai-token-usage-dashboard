@@ -16,7 +16,7 @@ class CodexAppServerError(RuntimeError):
 
 
 _EOF = object()
-_SUBSCRIPTION_SNAPSHOT_VERSION = 2
+SUBSCRIPTION_SNAPSHOT_VERSION = 3
 _STANDARD_CODEX_WINDOW_MINUTES = (300, 10_080)
 _STANDARD_WINDOW_PLANS = {"free", "go", "plus", "pro", "prolite", "team"}
 
@@ -183,6 +183,46 @@ def _safe_int(value: Any) -> int | None:
         return None
 
 
+def _nonnegative_int(value: Any) -> int | None:
+    if isinstance(value, float) and not value.is_integer():
+        return None
+    number = _safe_int(value)
+    return number if number is not None and 0 <= number <= 2**63 - 1 else None
+
+
+def _normalized_reset_credit_expirations(payload: Any) -> list[dict[str, Any]] | None:
+    """Keep available-credit counts/dates, never opaque IDs or backend copy.
+
+    Codex's summary may omit/cap detail rows. An explicit expiresAt=null means
+    no expiration; missing/invalid dates remain unknown instead.
+    """
+    if not isinstance(payload, dict) or not isinstance(payload.get("credits"), list):
+        return None
+    groups: dict[tuple[int | None, bool], int] = {}
+    seen_ids: set[str] = set()
+    for credit in payload["credits"]:
+        if not isinstance(credit, dict) or credit.get("status") != "available":
+            continue
+        identifier = credit.get("id")
+        if isinstance(identifier, str) and identifier:
+            if identifier in seen_ids:
+                continue
+            seen_ids.add(identifier)
+        expires_at = _nonnegative_int(credit.get("expiresAt"))
+        # Protocol timestamps are Unix seconds. Do not guess milliseconds,
+        # repair invalid epochs, or claim a missing date means "never".
+        if expires_at is not None and not 0 < expires_at <= 253_402_300_799:
+            expires_at = None
+        does_not_expire = "expiresAt" in credit and credit["expiresAt"] is None
+        key = (expires_at, does_not_expire)
+        groups[key] = groups.get(key, 0) + 1
+    ordered = sorted(groups, key=lambda key: (0 if key[0] is not None else 1 if key[1] else 2, key[0] or 0))
+    return [
+        {"expires_at": expires_at, "does_not_expire": does_not_expire, "count": groups[(expires_at, does_not_expire)]}
+        for expires_at, does_not_expire in ordered
+    ]
+
+
 def _normalized_window(payload: Any) -> dict[str, int | None] | None:
     if not isinstance(payload, dict):
         return None
@@ -265,7 +305,7 @@ def normalize_chatgpt_subscription_usage(
     if not isinstance(account, dict) or str(account.get("type") or "").strip().lower() != "chatgpt":
         account_type = str(account.get("type") or "").strip() if isinstance(account, dict) else ""
         return {
-            "version": _SUBSCRIPTION_SNAPSHOT_VERSION,
+            "version": SUBSCRIPTION_SNAPSHOT_VERSION,
             "state": "not_applicable",
             "fetched_at": _utc_datetime(now).isoformat(),
             "account_type": account_type or None,
@@ -306,16 +346,17 @@ def normalize_chatgpt_subscription_usage(
     account_plan = str(account.get("planType") or "").strip().lower()
     fallback_plan = next((str(limit.get("plan") or "") for limit in limits if limit.get("plan")), "")
     reset_credits = rate_limits_payload.get("rateLimitResetCredits")
-    reset_credit_count = _safe_int(reset_credits.get("availableCount")) if isinstance(reset_credits, dict) else None
+    reset_credit_count = _nonnegative_int(reset_credits.get("availableCount")) if isinstance(reset_credits, dict) else None
 
     return {
-        "version": _SUBSCRIPTION_SNAPSHOT_VERSION,
+        "version": SUBSCRIPTION_SNAPSHOT_VERSION,
         "state": "ok" if limits else "unavailable",
         "fetched_at": _utc_datetime(now).isoformat(),
         "account_type": "chatgpt",
         "plan": account_plan or fallback_plan or "unknown",
         "limits": limits,
-        "reset_credits_available": max(0, reset_credit_count) if reset_credit_count is not None else None,
+        "reset_credits_available": reset_credit_count,
+        "reset_credit_expirations": _normalized_reset_credit_expirations(reset_credits),
     }
 
 
@@ -350,11 +391,14 @@ def reconcile_chatgpt_subscription_usage(
 
     reconciled = dict(current)
     reconciled["version"] = max(
-        _SUBSCRIPTION_SNAPSHOT_VERSION,
+        SUBSCRIPTION_SNAPSHOT_VERSION,
         _safe_int(reconciled.get("version")) or 0,
     )
     if str(reconciled.get("account_type") or "").strip().lower() != "chatgpt":
         return reconciled
+    # A failed first lookup after an upgrade can retain a version-2 count but
+    # cannot manufacture the newly added detail rows.
+    reconciled.setdefault("reset_credit_expirations", None)
 
     raw_limits = reconciled.get("limits")
     if not isinstance(raw_limits, list):

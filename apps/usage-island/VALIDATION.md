@@ -1,13 +1,13 @@
 # Validation
 
-Validated locally on 2026-10-27 (macOS 26.7.1, Apple Silicon).
+Validated locally through 2026-10-28 (macOS 26.7.1, Apple Silicon).
 
 ## Automated checks
 
-`./scripts/check.sh`: **28 passing app checks**. The repository's full dashboard suite also passes **63 tests**.
+`./scripts/check.sh`: **36 passing app checks**. The repository's full dashboard suite also passes **69 tests**, for **105 checks** total.
 
-- 17 Python tests (including the generated formatter's byte-for-byte parity with the repository source): canonical values, weekly-only quota, credits, named model limits, signed-out accounts, stale usage versus stale quota, incomplete pricing, invalid/missing/non-finite metrics, failed collection, shared cache/cadence, resource validation and subprocess-group cleanup.
-- 11 native checks: JSON schema and duplicate fields, exact value preservation, date parsing, freshness boundaries, floating/notched presentation policy, locked/inactive-session privacy, missing resources, subprocess errors, timeout cleanup and bounded output.
+- 22 Python tests (including canonical formatter parity and reset-credit detail sanitization, capped/legacy/zero metadata, stale-data preservation, and unchanged existing fields): canonical values, weekly-only quota, credits, named model limits, signed-out accounts, stale usage versus stale quota, incomplete pricing, invalid/missing/non-finite metrics, failed collection, shared cache/cadence, resource validation and subprocess-group cleanup.
+- 14 native checks (including optional legacy metadata, no-expiration versus unknown dates, capped detail counts, expiry boundaries, and local-time/DST formatting): JSON schema and duplicate fields, exact value preservation, date parsing, freshness boundaries, floating/notched presentation policy, locked/inactive-session privacy, missing resources, subprocess errors, timeout cleanup and bounded output.
 - Debug and release app builds succeed with the SDK-selection wrapper.
 - Shell scripts pass syntax checks; Info.plist passes plist validation.
 
@@ -54,6 +54,17 @@ The initial release report is `.artifacts/validation/final-release.json`. Earlie
 - SketchyBar's launch service and formula were removed; its configuration/cache/log backup is local under `~/Library/Application Support/AIUsageIsland/Backups/`. The shared dashboard runtime, pricing and tmux helper were retained.
 - The post-integration launch occurred while locked: bundled cache loading and hidden-window privacy checks passed; interactive presentation checks were explicitly skipped for that run.
 - Build outputs, logs, private captures and generated resources remain ignored. Test credit amounts use a synthetic balance.
+
+## Reset availability and expiration dates (v0.2.0)
+
+- Confirmed the installed Codex protocol exposes an authoritative available count and optional/capped detail rows. Expiration timestamps use Unix seconds; explicit null means no expiration.
+- Subscription schema v3 stores only normalized counts and grouped dates. Opaque credit IDs and backend titles/descriptions are not persisted. Non-available credits are excluded and repeated IDs are deduplicated before grouping.
+- Version-2 caches refresh once for the new schema. Lookup failure preserves last-known values as stale without inventing dates; the terminal/compact field output stays unchanged.
+- Updated only the subscription normalizer and cache gate in the background-safe runtime, after checking they matched the known baseline and backing them up locally.
+- Rebuilt, locally signed and installed v0.2.0. The installed data source reports two available resets with two complete expiration groups.
+- Inspected the offscreen expanded-view preview: available count, both local expiration dates/time zones, and the relabelled Weekly reset are readable without clipping. This renders the real SwiftUI details view without creating a visible window or changing focus.
+- The Mac was locked during the installation smoke check. Cache loading, offscreen rendering and hidden-window privacy passed; interactive checks were explicitly skipped. No reset-consumption action was added or called.
+- Private evidence is retained under `.artifacts/reset-expirations-*/`, which remains gitignored. Tests use synthetic timestamps, not live account data.
 
 ## Remaining coverage limits
 

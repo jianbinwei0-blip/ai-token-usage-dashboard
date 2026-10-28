@@ -161,13 +161,41 @@ def fields_for_text(text: str) -> list[dict[str, str]]:
     return fields
 
 
+def reset_credit_payload(subscription: object, *, scope: str) -> dict | None:
+    if (scope not in {"combined", "codex"} or not isinstance(subscription, dict)
+            or subscription.get("account_type") != "chatgpt"
+            or subscription.get("state") == "not_applicable"):
+        return None
+    available = subscription.get("reset_credits_available")
+    if type(available) is not int or not 0 <= available <= 2**63 - 1:
+        available = None
+    raw = subscription.get("reset_credit_expirations")
+    expirations = None
+    if isinstance(raw, list):
+        expirations = []
+        for entry in raw:
+            if not isinstance(entry, dict):
+                continue
+            count = entry.get("count")
+            if type(count) is not int or not 0 < count <= 2**63 - 1:
+                continue
+            expires_at = entry.get("expires_at")
+            if type(expires_at) is not int or not 0 < expires_at <= 253_402_300_799:
+                expires_at = None
+            does_not_expire = entry.get("does_not_expire") is True and entry.get("expires_at") is None
+            expirations.append(dict(count=count, expires_at=expires_at, does_not_expire=does_not_expire))
+    complete = (expirations is not None and available is not None
+                and sum(entry["count"] for entry in expirations) == available)
+    return dict(available_count=available, expirations=expirations, details_complete=complete)
+
+
 def payload(snapshot: dict | None, *, failed: bool = False,
             now: dt.datetime | None = None) -> dict:
     now = now or dt.datetime.now().astimezone()
     common = dict(schema_version=1, read_at=now.isoformat())
     if not snapshot:
         return dict(common, generated_at=None, health="unavailable",
-                    subscription_state="not_applicable", subscription_fetched_at=None,
+                    subscription_state="not_applicable", subscription_fetched_at=None, reset_credits=None,
                     pricing_complete=False, scope="combined", providers=[],
                     text="AI unavailable", fields=fields_for_text("AI unavailable"),
                     message="Usage cache is missing or unreadable. Check that the existing dashboard runtime is available.")
@@ -183,6 +211,7 @@ def payload(snapshot: dict | None, *, failed: bool = False,
             common, generated_at=snapshot.get("generated_at"), health=health,
             subscription_state=state,
             subscription_fetched_at=subscription.get("fetched_at") if isinstance(subscription, dict) else None,
+            reset_credits=reset_credit_payload(subscription, scope=str(snapshot.get("scope") or "combined")),
             pricing_complete=bool((snapshot.get("quality") or {}).get("pricing_complete", True)),
             scope=str(snapshot.get("scope") or "combined"),
             providers=[str(p) for p in snapshot.get("providers", [])],

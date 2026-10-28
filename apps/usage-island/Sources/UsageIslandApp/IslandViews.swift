@@ -153,6 +153,9 @@ struct ExpandedUsageView: View {
                     ForEach(extras) { field in
                         metricRow(field)
                     }
+                    if let resetCredits = model.snapshot?.resetCredits {
+                        ResetCreditsView(info: resetCredits, stale: model.quotaIsStale || model.health == "error", now: model.now)
+                    }
                 }
                 separator
             } else if !extras.isEmpty {
@@ -272,7 +275,7 @@ struct ExpandedUsageView: View {
 
     private func metricRow(_ field: MetricField, stale: Bool = false) -> some View {
         HStack(alignment: .firstTextBaseline, spacing: 16) {
-            Text(field.key == "cost" ? "Estimated MTD cost" : field.caption)
+            Text(field.key == "cost" ? "Estimated MTD cost" : field.key == "reset" ? "Weekly reset" : field.caption)
                 .font(.system(size: 12))
                 .foregroundStyle(IslandPalette.caption)
             Spacer(minLength: 8)

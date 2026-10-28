@@ -14,7 +14,9 @@ A small native macOS companion for [AI Token Usage Dashboard](../../README.md), 
 
 On a non-notched display the summary is a floating pill. On a notched MacBook, Today and Week left sit on opposite sides of the hardware cutout. The island hides while locked or on an inactive user session, including when first launched while locked, and returns after unlock.
 
-Details show plan, weekly remaining quota, reset countdown, credits, Today/MTD tokens, estimated MTD cost, collection times, RAM and home-volume disk usage. Unavailable fields are not fabricated. Estimated cost is a usage valuation, not an extra subscription charge.
+Details show plan, weekly remaining quota, weekly reset countdown, credits, available resets and their expiration dates, Today/MTD tokens, estimated MTD cost, collection times, RAM and home-volume disk usage. Unavailable fields are not fabricated. Estimated cost is a usage valuation, not an extra subscription charge.
+
+Reset expiration dates include the local time zone. Resets sharing an expiration are grouped; an explicit non-expiring reset shows **No expiration**, while missing dates show **Not reported**. The server's available count remains authoritative even when it supplies only part of the detail list. Cached or already-expired entries are labelled rather than silently treated as current. This display is read-only and never consumes a reset.
 
 ## Installed location
 
@@ -59,6 +61,8 @@ The app reads cached data immediately and invokes the existing collector every 3
 
 The app preserves the formatter's weekly-only quota selection, credit rules, abbreviated numbers, model-specific quota fields and incomplete-pricing markers. Stale usage and stale account quotas are labelled separately. Helper failure retains prior values only with an explicit warning. Timeouts terminate the collector process group.
 
+Reset details require subscription snapshot schema v3. If using a separate background runtime, deploy the matching `scripts/dashboard_core/chatgpt_subscription.py` and `scripts/render_tmux_status.py` updates there as well, preserving its caches and pricing. The next collection upgrades older snapshots; a failed lookup retains cached counts without inventing expiration dates.
+
 The runtime is outside Documents to support locked-session access. The installed app bundles its adapter and formatter and does not depend on the source checkout or a running tmux session. If the daemon runtime is absent, the adapter can fall back to the existing Documents dashboard checkout, with that location's usual macOS access limitations.
 
 Overrides: `AI_USAGE_DASHBOARD_DIR`, `AI_USAGE_CACHE_FILE`, `AI_USAGE_PYTHON`, and developer-only `AI_USAGE_BRIDGE_DIR`. Finder launches do not inherit arbitrary shell exports.
@@ -71,7 +75,7 @@ Presentation state: `~/Library/Caches/AIUsageIsland/presentation.json`. It recor
 ./scripts/smoke.sh
 ```
 
-The opt-in smoke check restarts only this app, tests compact/expanded presentation, keyboard focus, Escape, hide/show, and an attached physical notch when available. It returns to the original display and leaves the app compact. It captures only the app's own views, not the desktop. While locked, it instead verifies cache loading and hidden-window privacy and explicitly records interactive checks as skipped. Screenshots can contain usage amounts, so `.artifacts/` is gitignored.
+The opt-in smoke check restarts only this app, tests compact/expanded presentation, keyboard focus, Escape, hide/show, and an attached physical notch when available. It returns to the original display and leaves the app compact. It captures only the app's own views, not the desktop. It also renders an offscreen expanded-view preview without creating a window or changing focus. While locked, it verifies cache loading and hidden-window privacy and explicitly records interactive checks as skipped. Screenshots can contain usage amounts, so `.artifacts/` is gitignored.
 
 See `VALIDATION.md` for the checks performed and remaining limitations.
 

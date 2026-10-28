@@ -20,6 +20,7 @@ if str(REPO_ROOT / "scripts") not in sys.path:
     sys.path.insert(0, str(REPO_ROOT / "scripts"))
 
 from dashboard_core.chatgpt_subscription import (
+    SUBSCRIPTION_SNAPSHOT_VERSION,
     fetch_chatgpt_subscription_usage,
     reconcile_chatgpt_subscription_usage,
 )
@@ -121,7 +122,7 @@ def snapshot_is_fresh(
             subscription_version = int(subscription.get("version") or 0)
         except (TypeError, ValueError, OverflowError):
             return False
-        if subscription_version < 2:
+        if subscription_version < SUBSCRIPTION_SNAPSHOT_VERSION:
             return False
     if str(snapshot.get("scope") or "combined") != scope:
         return False
@@ -180,7 +181,7 @@ def refresh_subscription_snapshot(
             fallback["last_attempted_at"] = attempted_at.astimezone(dt.timezone.utc).isoformat()
             return reconcile_chatgpt_subscription_usage(fallback, previous_subscription, now=attempted_at)
         return {
-            "version": 2,
+            "version": SUBSCRIPTION_SNAPSHOT_VERSION,
             "state": "unavailable",
             "fetched_at": attempted_at.astimezone(dt.timezone.utc).isoformat(),
             "account_type": None,
