@@ -4,15 +4,15 @@ A small native macOS companion for [AI Token Usage Dashboard](../../README.md), 
 
 ## Use
 
-- Click the floating summary, either notch wing, or the menu-bar chart icon to expand.
-- **Command–Control–U (`⌃⌘U`)** toggles details globally. **Escape** collapses the focused panel.
+- Click either compact summary wing or the menu-bar chart icon to expand.
+- **Command–Control–U (`⌃⌘U`)** toggles details globally. Click the same summary position again, click non-interactive text or empty space in the details, press **Escape**, or use the collapse button to return to compact mode. Refresh, Dashboard and More options keep their own actions.
 - Right-click the menu-bar icon, or use **…** in the detail panel, for options.
 - **Display** selects the main display automatically or a specific connected screen. A disconnected selection falls back to the main display.
 - **Refresh** updates the view using the collector's five-minute cache. It does not force an extra collection.
 - **Dashboard** opens the existing dashboard at http://127.0.0.1:8765.
 - **Hide island** leaves the menu-bar control available. **Quit** stops the app.
 
-On a non-notched display the summary is a floating pill. On a notched MacBook, Today and Week left sit on opposite sides of the hardware cutout. The island hides while locked or on an inactive user session, including when first launched while locked, and returns after unlock.
+Every display uses the same notch-style presentation at the top centre of the menu bar: Today and Week left occupy separate compact wings, and details expand below. A notched MacBook reserves its physical cutout; a non-notched display uses the library's virtual centre gap and menu-bar height instead of a floating pill. This is a centred overlay, not a system-reserved menu-bar item, so unusually long application menus or crowded status icons can overlap it. The island hides while locked or on an inactive user session, including when first launched while locked, and returns after unlock.
 
 Details show plan, weekly remaining quota, weekly reset countdown, credits, available resets and their expiration dates, Today/MTD tokens, estimated MTD cost, collection times, RAM and home-volume disk usage. Unavailable fields are not fabricated. Estimated cost is a usage valuation, not an extra subscription charge.
 
@@ -69,13 +69,13 @@ Overrides: `AI_USAGE_DASHBOARD_DIR`, `AI_USAGE_CACHE_FILE`, `AI_USAGE_PYTHON`, a
 
 ## Diagnostics and UI smoke checks
 
-Presentation state: `~/Library/Caches/AIUsageIsland/presentation.json`. It records status, display selection, and the registered shortcut's name/key code/modifiers, not transcripts or credentials.
+Presentation state: `~/Library/Caches/AIUsageIsland/presentation.json`. It records status, display selection, the notch presentation style, whether a physical notch is present, and the registered shortcut's name/key code/modifiers, not transcripts or credentials.
 
 ```sh
 ./scripts/smoke.sh
 ```
 
-The opt-in smoke check restarts only this app, tests compact/expanded presentation, keyboard focus, Escape, hide/show, and an attached physical notch when available. It returns to the original display and leaves the app compact. It captures only the app's own views, not the desktop. It also renders an offscreen expanded-view preview without creating a window or changing focus. While locked, it verifies cache loading and hidden-window privacy and explicitly records interactive checks as skipped. Screenshots can contain usage amounts, so `.artifacts/` is gitignored.
+The opt-in smoke check restarts only this app, tests notch-style compact/expanded presentation and top-centre anchoring on every connected display, keyboard focus, same-position summary expand/collapse, detail-text/background click collapse, button-action preservation, Escape, and hide/show. It returns to the original display and leaves the app compact, including after a failed check. It captures only the app's own views, not the desktop. It also renders an offscreen expanded-view preview without creating a window or changing focus. While locked, it verifies cache loading and hidden-window privacy and explicitly records interactive checks as skipped. Screenshots can contain usage amounts, so `.artifacts/` is gitignored.
 
 See `VALIDATION.md` for the checks performed and remaining limitations.
 

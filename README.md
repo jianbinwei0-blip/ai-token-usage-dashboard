@@ -165,7 +165,7 @@ python3 scripts/render_tmux_status.py --scope dsh --chatgpt-usage off --max-widt
 
 ## Native macOS Usage Island
 
-[AI Usage Island](apps/usage-island/README.md) provides a native top-centre summary on external displays and a hardware-notch layout on supported MacBooks. Click to expand Today/MTD tokens, estimated cost, plan/quota/weekly reset, credits, available resets with expiration dates, and system-resource details. Command–Control–U toggles details; Escape collapses them.
+[AI Usage Island](apps/usage-island/README.md) provides the same native top-centre, menu-bar-height notch-style summary on external displays and supported MacBooks, preserving the physical cutout when present. Click to expand Today/MTD tokens, estimated cost, plan/quota/weekly reset, credits, available resets with expiration dates, and system-resource details. Command–Control–U toggles details; Escape collapses them.
 
 From the repository root:
 

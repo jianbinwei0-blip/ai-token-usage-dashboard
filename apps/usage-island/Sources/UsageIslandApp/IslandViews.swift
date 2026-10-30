@@ -21,62 +21,30 @@ enum IslandPalette {
     }
 }
 
+private extension View {
+    /// Layout-only click targets for the opt-in native smoke check. These do not
+    /// install gestures, receive clicks or create extra views in normal use.
+    @ViewBuilder
+    func detailClickTarget(_ identifier: String, model: MetricsModel) -> some View {
+        if model.detailClickTargets != nil {
+            accessibilityIdentifier(identifier)
+                .onGeometryChange(for: CGRect.self, of: { $0.frame(in: .global) }) { frame in
+                    model.detailClickTargets?[identifier] = frame
+                }
+        } else {
+            accessibilityIdentifier(identifier)
+        }
+    }
+}
+
 struct IslandRootView: View {
     @ObservedObject var model: MetricsModel
 
     var body: some View {
-        Group {
-            if model.isExpanded || model.hasHardwareNotch {
-                ExpandedUsageView(model: model)
-            } else {
-                FloatingSummaryView(model: model)
-            }
-        }
-        .foregroundStyle(IslandPalette.text)
-        .background {
-            if !model.hasHardwareNotch {
-                // Fill the kit's 15pt content inset without altering its layout.
-                IslandPalette.surface.padding(-15)
-            }
-        }
-        .preferredColorScheme(.dark)
-        .onExitCommand(perform: model.collapse)
-    }
-}
-
-struct FloatingSummaryView: View {
-    @ObservedObject var model: MetricsModel
-
-    var body: some View {
-        Button(action: model.toggleDetails) {
-            HStack(spacing: 14) {
-                Image(systemName: model.needsAttention ? "exclamationmark.circle" : "chart.bar.xaxis")
-                    .foregroundStyle(model.needsAttention ? IslandPalette.warning : IslandPalette.caption)
-                    .font(.system(size: 13))
-                compactValue("Today", value: model.today)
-                Rectangle().fill(IslandPalette.separator).frame(width: 1, height: 14)
-                compactValue("Week left", value: model.weekly,
-                             tone: model.quotaIsStale ? "warning" : model.snapshot?.field("weekly")?.tone ?? "text")
-                Image(systemName: "chevron.down")
-                    .font(.system(size: 10, weight: .semibold))
-                    .foregroundStyle(IslandPalette.caption)
-            }
-            .frame(height: 24)
-            .fixedSize(horizontal: true, vertical: false)
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .accessibilityLabel("Show usage details. Today \(model.today) tokens. Weekly \(model.weekly) remaining. \(model.status).")
-        .help("Show usage details (\(GlobalShortcut.displayName)). " + model.status)
-    }
-
-    private func compactValue(_ title: String, value: String, tone: String = "text") -> some View {
-        HStack(spacing: 6) {
-            Text(title).font(.system(size: 12)).foregroundStyle(IslandPalette.caption)
-            Text(value).font(IslandPalette.valueFont).monospacedDigit()
-                .foregroundStyle(IslandPalette.tone(tone))
-                .fixedSize()
-        }
+        ExpandedUsageView(model: model)
+            .foregroundStyle(IslandPalette.text)
+            .preferredColorScheme(.dark)
+            .onExitCommand(perform: model.collapse)
     }
 }
 
@@ -104,6 +72,7 @@ struct NotchSummaryView: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .detailClickTarget(leading ? "usage-summary-leading" : "usage-summary-trailing", model: model)
         .accessibilityLabel(leading ? "Show usage details. Today \(model.today) tokens. \(model.status)." :
                             "Show usage details. Weekly \(model.weekly) remaining. \(model.status).")
         .help("Show usage details (\(GlobalShortcut.displayName))")
@@ -217,8 +186,10 @@ struct ExpandedUsageView: View {
                     Label(model.isRefreshing ? "Refreshing…" : "Refresh", systemImage: "arrow.clockwise")
                 }
                 .disabled(model.isRefreshing)
+                .detailClickTarget("usage-details-refresh", model: model)
                 .help("Refresh the view using the existing five-minute collection cache.")
                 Button("Dashboard", action: model.openDashboard)
+                    .detailClickTarget("usage-details-dashboard", model: model)
                     .help("Open the existing local usage dashboard.")
                 Spacer()
                 Button(action: model.openMenu) {
@@ -226,6 +197,7 @@ struct ExpandedUsageView: View {
                         .frame(width: 20)
                 }
                 .accessibilityLabel("More options")
+                .detailClickTarget("usage-details-menu", model: model)
                 .help("More options")
             }
             .controlSize(.small)
@@ -241,6 +213,9 @@ struct ExpandedUsageView: View {
         .frame(width: 400)
         .padding(.horizontal, 6)
         .padding(.vertical, 4)
+        // Child buttons retain their own actions; only unhandled taps collapse.
+        .contentShape(Rectangle())
+        .onTapGesture(perform: model.collapse)
         .transaction { transaction in
             // Values are status, not a ticker. Do not animate refreshes.
             transaction.animation = nil
@@ -251,6 +226,7 @@ struct ExpandedUsageView: View {
         HStack(alignment: .top) {
             VStack(alignment: .leading, spacing: 5) {
                 Text("AI usage").font(.system(size: 16, weight: .semibold))
+                    .detailClickTarget("usage-details-title", model: model)
                 Label(model.status, systemImage: model.needsAttention ? "exclamationmark.circle" : "circle.fill")
                     .font(.system(size: 11))
                     .foregroundStyle(model.needsAttention ? IslandPalette.warning : IslandPalette.caption)
@@ -265,7 +241,8 @@ struct ExpandedUsageView: View {
             .buttonStyle(.plain)
             .foregroundStyle(IslandPalette.caption)
             .accessibilityLabel("Collapse usage details")
-            .help("Collapse (Escape)")
+            .detailClickTarget("usage-details-collapse", model: model)
+            .help("Collapse (click details or Escape)")
         }
     }
 
@@ -287,6 +264,7 @@ struct ExpandedUsageView: View {
                 .fixedSize(horizontal: false, vertical: true)
         }
         .accessibilityElement(children: .combine)
+        .detailClickTarget("usage-details-metric-\(field.key)", model: model)
     }
 
     private func resource(_ label: String, value: String) -> some View {

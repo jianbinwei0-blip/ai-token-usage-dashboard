@@ -15,6 +15,9 @@ final class MetricsModel: ObservableObject {
     @Published var isVisible = true
     @Published var hasHardwareNotch = false
 
+    // Populated only during the opt-in smoke check, never published to the UI.
+    var detailClickTargets: [String: CGRect]?
+
     var toggleDetails: () -> Void = {}
     var collapse: () -> Void = {}
     var openDashboard: () -> Void = {}

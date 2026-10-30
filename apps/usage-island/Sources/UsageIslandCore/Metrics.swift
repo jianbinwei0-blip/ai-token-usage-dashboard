@@ -142,13 +142,13 @@ public struct ResourceSnapshot: Codable, Equatable, Sendable {
     }
 }
 
-/// DynamicNotchKit hides its native compact state on non-notched screens.
-/// Keep its floating panel expanded and swap our content instead.
+/// All displays use notch-style compact and expanded states. Physical hardware
+/// affects the cutout geometry, not the presentation policy.
 public enum IslandPresentation: Equatable, Sendable {
-    case hidden, notchCompact, expanded
+    case hidden, compact, expanded
 
-    public static func resolve(visible: Bool, details: Bool, hardwareNotch: Bool) -> Self {
+    public static func resolve(visible: Bool, details: Bool) -> Self {
         if !visible { return .hidden }
-        return hardwareNotch && !details ? .notchCompact : .expanded
+        return details ? .expanded : .compact
     }
 }

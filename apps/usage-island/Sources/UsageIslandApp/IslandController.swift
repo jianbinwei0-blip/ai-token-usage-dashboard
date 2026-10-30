@@ -15,6 +15,8 @@ final class IslandController: NSObject {
     private var lockObservations: [NSObjectProtocol] = []
     private var modelObservation: AnyCancellable?
     private var escapeMonitor: Any?
+    private var topBandMouseMonitor: Any?
+    private var topBandMouseDown: (windowNumber: Int, location: NSPoint)?
     private var applyingPresentation = false
     private var presentationRequested = false
     private var repositionRequested = false
@@ -37,7 +39,9 @@ final class IslandController: NSObject {
         super.init()
         island = DynamicNotch(
             hoverBehavior: [],
-            style: .auto,
+            // Keep native compact wings at the top edge on every display.
+            // The kit uses menu-bar geometry when no hardware cutout exists.
+            style: .notch,
             expanded: { [model] in IslandRootView(model: model) },
             compactLeading: { [model] in NotchSummaryView(model: model, leading: true) },
             compactTrailing: { [model] in NotchSummaryView(model: model, leading: false) }
@@ -129,12 +133,57 @@ final class IslandController: NSObject {
             }
             return consumed ? nil : event
         }
+        topBandMouseMonitor = NSEvent.addLocalMonitorForEvents(
+            matching: [.leftMouseDown, .leftMouseUp, .leftMouseDragged]
+        ) { [weak self] event in
+            let consumed = MainActor.assumeIsolated {
+                self?.handleTopBandMouseEvent(event) ?? false
+            }
+            return consumed ? nil : event
+        }
         modelObservation = model.objectWillChange.sink { [weak self] _ in
             DispatchQueue.main.async { self?.updateStatus() }
         }
         model.start()
         requestPresentation()
         updateStatus()
+    }
+
+    /// The library's expanded content starts below the reserved notch/menu-bar
+    /// band. Handle that band separately so a second click on either former
+    /// compact wing collapses, without covering or intercepting detail buttons.
+    private func handleTopBandMouseEvent(_ event: NSEvent) -> Bool {
+        if event.type == .leftMouseDown {
+            topBandMouseDown = nil
+            if isExpandedTopBandClick(event) {
+                topBandMouseDown = (event.windowNumber, event.locationInWindow)
+            }
+            return false
+        }
+        guard let start = topBandMouseDown else { return false }
+        let stayedNearStart = abs(event.locationInWindow.x - start.location.x) <= 4 &&
+            abs(event.locationInWindow.y - start.location.y) <= 4
+        if event.type == .leftMouseDragged {
+            if !stayedNearStart { topBandMouseDown = nil }
+            return false
+        }
+        guard event.type == .leftMouseUp else { return false }
+        topBandMouseDown = nil
+        guard event.windowNumber == start.windowNumber, stayedNearStart,
+              isExpandedTopBandClick(event) else { return false }
+        collapse()
+        return true
+    }
+
+    private func isExpandedTopBandClick(_ event: NSEvent) -> Bool {
+        guard model.isVisible, model.isExpanded, !suspended,
+              let window = island.windowController?.window,
+              event.window === window, let screen = selectedScreen else { return false }
+        let height = model.hasHardwareNotch ? screen.safeAreaInsets.top :
+            screen.frame.maxY - screen.visibleFrame.maxY
+        let band = NSRect(x: 0, y: window.frame.height - height,
+                          width: window.frame.width, height: height)
+        return band.contains(event.locationInWindow)
     }
 
     private func observe(_ center: NotificationCenter, _ name: Notification.Name,
@@ -238,10 +287,9 @@ final class IslandController: NSObject {
         }
         configureWindow(on: screen)
         switch IslandPresentation.resolve(visible: model.isVisible && !suspended,
-                                          details: model.isExpanded,
-                                          hardwareNotch: model.hasHardwareNotch) {
+                                          details: model.isExpanded) {
         case .hidden: await island.hide()
-        case .notchCompact: await island.compact(on: screen)
+        case .compact: await island.compact(on: screen)
         case .expanded: await island.expand(on: screen)
         }
         configureWindow(on: screen)
@@ -264,8 +312,8 @@ final class IslandController: NSObject {
         window.hidesOnDeactivate = false
         window.appearance = NSAppearance(named: .darkAqua)
         window.isMovable = false
-        let width: CGFloat = model.isExpanded ? 550 : (model.hasHardwareNotch ? 600 : 440)
-        let height: CGFloat = model.isExpanded ? 760 : (model.hasHardwareNotch ? 100 : 160)
+        let width: CGFloat = model.isExpanded ? 550 : 600
+        let height: CGFloat = model.isExpanded ? 760 : 100
         let size = NSSize(width: min(width, screen.frame.width), height: min(height, screen.frame.height))
         window.setFrame(NSRect(x: screen.frame.midX - size.width / 2,
                                y: screen.frame.maxY - size.height,
@@ -340,6 +388,7 @@ final class IslandController: NSObject {
             "window_visible": island.windowController?.window?.isVisible ?? false,
             "expanded": model.isExpanded,
             "hardware_notch": model.hasHardwareNotch,
+            "presentation_style": island.style == .notch ? "notch" : "other",
             "shortcut_registered": shortcutRegistered,
             "shortcut": GlobalShortcut.displayName,
             "shortcut_key_code": Int(GlobalShortcut.keyCode),
@@ -364,6 +413,10 @@ final class IslandController: NSObject {
     /// desktop, so no Screen Recording or Accessibility permission is required.
     func runSmokeTest(in directory: URL) async {
         var checks: [String] = []
+        let originalDisplay = selectedDisplayID
+        model.detailClickTargets = [:]
+        model.objectWillChange.send()
+        defer { model.detailClickTargets = nil }
         do {
             try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
             for _ in 0..<100 where model.isLoading {
@@ -381,15 +434,41 @@ final class IslandController: NSObject {
                                  skipped: ["Interactive presentation, focus and shortcut checks require an unlocked session."])
                 return
             }
-            try verify(model.isVisible && !model.isExpanded, "initial compact")
+            guard let originalScreen = selectedScreen else {
+                throw NSError(domain: "UsageIslandSmoke", code: 6,
+                              userInfo: [NSLocalizedDescriptionKey: "No connected display"])
+            }
+            try verifyNotchPresentation(on: originalScreen, expanded: false)
             try capture(to: directory.appendingPathComponent("compact.png"))
-            checks.append("compact visible on primary display")
+            checks.append("notch-style compact at top centre of \(originalScreen.localizedName)")
+            try await verifySamePositionSummaryClicks(on: originalScreen)
+            checks.append("same-position clicks expand and collapse both compact wings on \(originalScreen.localizedName)")
 
             toggleDetails()
             try await settle()
-            try verify(model.isExpanded && island.windowController?.window?.isKeyWindow == true, "expand and focus")
+            try verifyNotchPresentation(on: originalScreen, expanded: true)
+            try verify(island.windowController?.window?.isKeyWindow == true, "expand and focus")
             try capture(to: directory.appendingPathComponent("expanded.png"))
             checks.append("expanded detail view and keyboard focus")
+
+            try await verifyDetailControls(on: originalScreen)
+            checks.append("Refresh, Dashboard and More options retain their actions without collapsing")
+            try await clickDetailElement("usage-details-collapse")
+            try verifyNotchPresentation(on: originalScreen, expanded: false)
+            checks.append("collapse button still returns to compact")
+            toggleDetails()
+            try await settle()
+            try await clickDetailElement("usage-details-title")
+            try verifyNotchPresentation(on: originalScreen, expanded: false)
+            try capture(to: directory.appendingPathComponent("click-collapsed.png"))
+            checks.append("clicking detail text collapses through the native mouse event loop")
+            toggleDetails()
+            try await settle()
+            try await clickDetailElement("usage-details-title", offsetX: 120)
+            try verifyNotchPresentation(on: originalScreen, expanded: false)
+            checks.append("clicking empty space in the details collapses")
+            toggleDetails()
+            try await settle()
 
             if let window = island.windowController?.window,
                let escape = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [],
@@ -401,7 +480,7 @@ final class IslandController: NSObject {
             }
             try await Task.sleep(for: .milliseconds(200))
             try await settle()
-            try verify(!model.isExpanded, "Escape collapse")
+            try verifyNotchPresentation(on: originalScreen, expanded: false)
             checks.append("Escape collapses through the native event loop")
 
             toggleVisibility()
@@ -412,32 +491,150 @@ final class IslandController: NSObject {
             try verify(model.isVisible && island.windowController?.window?.isVisible == true, "show")
             checks.append("hide and show recreate the panel")
 
-            let originalDisplay = selectedDisplayID
-            if let notchedScreen = NSScreen.screens.first(where: { $0.safeAreaInsets.top > 0 }) {
-                selectedDisplayID = Self.displayID(notchedScreen)
+            for screen in NSScreen.screens where Self.displayID(screen) != Self.displayID(originalScreen) {
+                selectedDisplayID = Self.displayID(screen)
                 repositionRequested = true
                 requestPresentation()
                 try await settle()
-                try verify(model.hasHardwareNotch && !model.isExpanded, "native notch compact")
-                try capture(to: directory.appendingPathComponent("hardware-notch-compact.png"))
+                try verifyNotchPresentation(on: screen, expanded: false)
+                let prefix = "display-\(Self.displayID(screen))"
+                try capture(to: directory.appendingPathComponent("\(prefix)-compact.png"))
                 toggleDetails()
                 try await settle()
-                try capture(to: directory.appendingPathComponent("hardware-notch-expanded.png"))
-                checks.append("physical notch compact and expanded layouts")
-                collapse()
-                try await settle()
-                selectedDisplayID = originalDisplay
-                repositionRequested = true
-                requestPresentation()
-                try await settle()
-                checks.append("return to original display")
+                try verifyNotchPresentation(on: screen, expanded: true)
+                try verify(island.windowController?.window?.isKeyWindow == true, "expand and focus on \(screen.localizedName)")
+                try capture(to: directory.appendingPathComponent("\(prefix)-expanded.png"))
+                checks.append("notch-style compact and expanded layouts on \(screen.localizedName) (hardware notch: \(model.hasHardwareNotch))")
+                try await clickDetailElement("usage-details-metric-today")
+                try verifyNotchPresentation(on: screen, expanded: false)
+                checks.append("clicking a detail metric collapses on \(screen.localizedName)")
+                try await verifySamePositionSummaryClicks(on: screen)
+                checks.append("same-position clicks expand and collapse both compact wings on \(screen.localizedName)")
             }
+            selectedDisplayID = originalDisplay
+            repositionRequested = true
+            requestPresentation()
+            try await settle()
+            try verifyNotchPresentation(on: originalScreen, expanded: false)
+            checks.append("return to original display in compact state")
             try verify(shortcutRegistered, "global shortcut registration")
             checks.append("\(GlobalShortcut.displayName) registered without Accessibility permission")
             writeSmokeReport(directory: directory, checks: checks, error: nil)
         } catch {
-            writeSmokeReport(directory: directory, checks: checks, error: error.localizedDescription)
+            let failure = error.localizedDescription
+            selectedDisplayID = originalDisplay
+            model.isVisible = true
+            model.isExpanded = false
+            focusRequested = false
+            repositionRequested = true
+            requestPresentation()
+            try? await settle()
+            restorePreviousApplication()
+            writeSmokeReport(directory: directory, checks: checks, error: failure)
         }
+    }
+
+    /// Use the real SwiftUI layout, not fixed coordinates or synthetic actions.
+    /// Events stay inside this app's window and need no Accessibility permission.
+    private func clickDetailElement(_ identifier: String, offsetX: CGFloat = 0) async throws {
+        guard let window = island.windowController?.window,
+              let content = window.contentView,
+              let frame = model.detailClickTargets?[identifier] else {
+            try verify(false, "detail click target " + identifier)
+            return
+        }
+        try verify(frame.width > 0 && frame.height > 0, "non-empty click target")
+        let point = content.convert(NSPoint(x: frame.midX + offsetX, y: frame.midY), to: nil)
+        try await clickOwnWindow(at: window.convertPoint(toScreen: point))
+    }
+
+    private func clickOwnWindow(at screenPoint: NSPoint) async throws {
+        guard let window = island.windowController?.window, let content = window.contentView else {
+            try verify(false, "own window for click")
+            return
+        }
+        let point = window.convertPoint(fromScreen: screenPoint)
+        try verify(content.bounds.contains(content.convert(point, from: nil)), "click inside own window")
+        for type: NSEvent.EventType in [.leftMouseDown, .leftMouseUp] {
+            guard let event = NSEvent.mouseEvent(
+                with: type, location: point, modifierFlags: [],
+                timestamp: ProcessInfo.processInfo.systemUptime,
+                windowNumber: window.windowNumber, context: nil, eventNumber: 0,
+                clickCount: 1, pressure: type == .leftMouseDown ? 1 : 0
+            ) else {
+                try verify(false, "create own-window mouse event")
+                return
+            }
+            NSApp.postEvent(event, atStart: false)
+        }
+        try await Task.sleep(for: .milliseconds(200))
+        try await settle()
+    }
+
+    private func verifySamePositionSummaryClicks(on screen: NSScreen) async throws {
+        for identifier in ["usage-summary-leading", "usage-summary-trailing"] {
+            guard let window = island.windowController?.window,
+                  let content = window.contentView,
+                  let frame = model.detailClickTargets?[identifier] else {
+                try verify(false, "compact wing click target " + identifier)
+                return
+            }
+            let localPoint = content.convert(NSPoint(x: frame.midX, y: frame.midY), to: nil)
+            let originalScreenPoint = window.convertPoint(toScreen: localPoint)
+            try await clickOwnWindow(at: originalScreenPoint)
+            try verifyNotchPresentation(on: screen, expanded: true)
+            // Keep the original screen coordinate, not the resized window's
+            // local coordinate: this reproduces clicking the same physical spot.
+            try await clickOwnWindow(at: originalScreenPoint)
+            try verifyNotchPresentation(on: screen, expanded: false)
+        }
+    }
+
+    private func verifyDetailControls(on screen: NSScreen) async throws {
+        // Exercise real button hit-testing, but replace external navigation and
+        // menu callbacks so the smoke check never opens a browser or popup.
+        let dashboard = model.openDashboard
+        let menu = model.openMenu
+        var dashboardClicks = 0
+        var menuClicks = 0
+        model.openDashboard = { dashboardClicks += 1 }
+        model.openMenu = { menuClicks += 1 }
+        model.objectWillChange.send()
+        defer {
+            model.openDashboard = dashboard
+            model.openMenu = menu
+            model.objectWillChange.send()
+        }
+        try await settle()
+        try await clickDetailElement("usage-details-dashboard")
+        try verify(dashboardClicks == 1, "Dashboard click reaches its action")
+        try verifyNotchPresentation(on: screen, expanded: true)
+        try await clickDetailElement("usage-details-menu")
+        try verify(menuClicks == 1, "More options click reaches its action")
+        try verifyNotchPresentation(on: screen, expanded: true)
+
+        for _ in 0..<100 where model.isRefreshing {
+            try await Task.sleep(for: .milliseconds(100))
+        }
+        try verify(!model.isRefreshing, "Refresh enabled before click")
+        var refreshStarted = false
+        let observation = model.$isRefreshing.sink { if $0 { refreshStarted = true } }
+        defer { observation.cancel() }
+        try await clickDetailElement("usage-details-refresh")
+        try verify(refreshStarted, "Refresh click reaches its action")
+        try verifyNotchPresentation(on: screen, expanded: true)
+    }
+
+    private func verifyNotchPresentation(on screen: NSScreen, expanded: Bool) throws {
+        try verify(island.style == .notch, "notch style on \(screen.localizedName)")
+        try verify(model.isVisible && model.isExpanded == expanded, "compact/expanded state on \(screen.localizedName)")
+        guard let window = island.windowController?.window, window.isVisible else {
+            try verify(false, "visible panel on \(screen.localizedName)")
+            return
+        }
+        try verify(abs(window.frame.maxY - screen.frame.maxY) < 1 &&
+                   abs(window.frame.midX - screen.frame.midX) < 1,
+                   "panel anchored to top centre of \(screen.localizedName)")
     }
 
     private func settle() async throws {
@@ -507,6 +704,8 @@ final class IslandController: NSObject {
         model.stop()
         shortcut?.unregister()
         if let escapeMonitor { NSEvent.removeMonitor(escapeMonitor) }
+        if let topBandMouseMonitor { NSEvent.removeMonitor(topBandMouseMonitor) }
+        topBandMouseDown = nil
         for (center, token) in observations { center.removeObserver(token) }
         for token in lockObservations { DistributedNotificationCenter.default().removeObserver(token) }
         modelObservation?.cancel()

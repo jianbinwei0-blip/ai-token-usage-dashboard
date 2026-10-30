@@ -132,17 +132,15 @@ enum CoreChecks {
                 try check(UsageSnapshot.date("not-a-date") == nil, "Invalid date accepted")
                 try check(UsageSnapshot.date("2026-10-27T20:00:05.123456+00:00") != nil, "Fractional ISO date")
             }),
-            ("floating compact stays visible; hardware notch uses native compact", {
-                try check(IslandPresentation.resolve(visible: true, details: false, hardwareNotch: false) == .expanded,
-                          "Floating compact must not call kit.compact()")
-                try check(IslandPresentation.resolve(visible: true, details: true, hardwareNotch: false) == .expanded,
-                          "Floating details")
-                try check(IslandPresentation.resolve(visible: true, details: false, hardwareNotch: true) == .notchCompact,
-                          "Hardware compact")
-                try check(IslandPresentation.resolve(visible: true, details: true, hardwareNotch: true) == .expanded,
-                          "Hardware expanded")
-                try check(IslandPresentation.resolve(visible: false, details: true, hardwareNotch: false) == .hidden,
-                          "Explicit hide")
+            ("compact and expanded presentation are independent of display hardware", {
+                try check(IslandPresentation.resolve(visible: true, details: false) == .compact,
+                          "Every display must use native compact")
+                try check(IslandPresentation.resolve(visible: true, details: true) == .expanded,
+                          "Every display must expand details")
+                for details in [false, true] {
+                    try check(IslandPresentation.resolve(visible: false, details: details) == .hidden,
+                              "Explicit hide must win over compact and expanded")
+                }
             }),
             ("lock and inactive-session privacy policy", {
                 try check(SessionPrivacy.shouldSuspend(screenLocked: true, onConsole: true, loginWindowIsFrontmost: false),
