@@ -8,4 +8,13 @@ __pycache__/
 *.log
 *.pid
 tmp/
-.pi/
+
+# Share skill source even when .pi/ is globally ignored; keep other Pi files local.
+!/.pi/
+/.pi/*
+!/.pi/skills/
+
+# Verification outputs do not belong in skill source trees.
+/.pi/skills/**/pstack-evidence/
+/.pi/skills/**/pstack-scratch/
+/.pi/skills/**/.artifacts/

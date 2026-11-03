@@ -234,6 +234,22 @@ For the native macOS app, also run:
 apps/usage-island/scripts/check.sh
 ```
 
+### User-flow verification with Pi
+
+The repository includes two [project verification skills](.pi/skills/README.md):
+
+- [pstack-verify-ai-token-usage-dashboard](.pi/skills/pstack-verify-ai-token-usage-dashboard/SKILL.md) drives the web UI, recalc API, retained history and tmux formatter with isolated synthetic data.
+- [pstack-verify-usage-island](.pi/skills/pstack-verify-usage-island/SKILL.md) checks the native app, packaged adapter, account-display fixtures and native mouse/Escape flows. Full input proof requires an unlocked macOS session; a locked-session preview verifies rendering and hidden startup only.
+
+In Pi, run `/reload`, then invoke the matching `/skill:pstack-verify-...` command.
+Run both skills for shared collector, formatter, pricing or account-contract changes.
+Each skill also documents shell commands that work without Pi or a pstack installation.
+
+Skill definitions, feature recipes, helpers and tests under `.pi/skills/` are shared
+source. Other `.pi/` content stays ignored by default, including task state and
+local QA evidence. Verification run data and reports remain under ignored `tmp/`;
+never commit personal usage captures, caches, app bundles or run records.
+
 ## Use as a Codex Skill
 
 This repo is skill-ready and includes:
