@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import datetime as dt
+import html as html_lib
 import json
 import re
 
@@ -282,8 +283,8 @@ def build_breakdown_table_body(rows: list[dict[str, int | float | str | bool]]) 
         row_lines.append(
             "            <tr>"
             f'<td><span class="rank{rank_class}">{idx}</span></td>'
-            f'<td>{item["agent_cli"]}</td>'
-            f'<td>{item["model"]}</td>'
+            f'<td>{html_lib.escape(str(item["agent_cli"]))}</td>'
+            f'<td>{html_lib.escape(str(item["model"]))}</td>'
             f'<td class="num">{item["sessions"]}</td>'
             f'<td class="num">{format_number(int(item["input_tokens"]))}</td>'
             f'<td class="num">{format_number(int(item["output_tokens"]))}</td>'
@@ -296,7 +297,9 @@ def build_breakdown_table_body(rows: list[dict[str, int | float | str | bool]]) 
 
 
 def build_usage_dataset_script(dataset: dict) -> str:
-    dataset_json = json.dumps(dataset, separators=(",", ":"))
+    dataset_json = json.dumps(dataset, separators=(",", ":"), allow_nan=False)
+    # Script elements are raw text, even with application/json. Escape HTML syntax.
+    dataset_json = dataset_json.replace("&", "\\u0026").replace("<", "\\u003c").replace(">", "\\u003e")
     return f'<script id="usageDataset" type="application/json">{dataset_json}</script>'
 
 
@@ -304,7 +307,7 @@ def inject_usage_dataset(html: str, dataset: dict) -> str:
     script = build_usage_dataset_script(dataset)
 
     if USAGE_DATASET_PATTERN.search(html):
-        return USAGE_DATASET_PATTERN.sub(script, html, count=1)
+        return USAGE_DATASET_PATTERN.sub(lambda _: script, html, count=1)
 
     if "</main>" in html:
         return html.replace("</main>", f"  {script}\n  </main>", 1)
@@ -389,15 +392,15 @@ def rewrite_dashboard_html(
 
     updated = html
     if FIXED_STATS_SECTION_PATTERN.search(updated) and RANGE_STATS_SECTION_PATTERN.search(updated):
-        updated = FIXED_STATS_SECTION_PATTERN.sub(fixed_stats_section, updated, count=1)
-        updated = RANGE_STATS_SECTION_PATTERN.sub(range_stats_section, updated, count=1)
+        updated = FIXED_STATS_SECTION_PATTERN.sub(lambda _: fixed_stats_section, updated, count=1)
+        updated = RANGE_STATS_SECTION_PATTERN.sub(lambda _: range_stats_section, updated, count=1)
     else:
         updated = LEGACY_STATS_SECTION_PATTERN.sub(
-            f"{fixed_stats_section}\n\n{range_stats_section}",
+            lambda _: f"{fixed_stats_section}\n\n{range_stats_section}",
             updated,
             count=1,
         )
-    updated = DAILY_USAGE_TBODY_PATTERN.sub(table_body, updated, count=1)
-    updated = BREAKDOWN_TBODY_PATTERN.sub(breakdown_body, updated, count=1)
+    updated = DAILY_USAGE_TBODY_PATTERN.sub(lambda _: table_body, updated, count=1)
+    updated = BREAKDOWN_TBODY_PATTERN.sub(lambda _: breakdown_body, updated, count=1)
     updated = rewrite_provider_select(updated, dataset)
     return inject_usage_dataset(updated, dataset)

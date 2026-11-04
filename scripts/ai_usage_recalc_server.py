@@ -126,9 +126,8 @@ class Handler(BaseHTTPRequestHandler):
             self.send_header("Cache-Control", "no-cache")
         else:
             self.send_header("Cache-Control", "no-store, max-age=0")
-            self.send_header("Access-Control-Allow-Origin", "*")
-            self.send_header("Access-Control-Allow-Methods", "GET, OPTIONS")
-            self.send_header("Access-Control-Allow-Headers", "Content-Type")
+        self.send_header("X-Content-Type-Options", "nosniff")
+        self.send_header("X-Frame-Options", "DENY")
         for key, value in (extra_headers or {}).items():
             self.send_header(key, value)
         self.end_headers()
@@ -141,8 +140,27 @@ class Handler(BaseHTTPRequestHandler):
         self._set_headers(status_code=status_code, content_type="text/html; charset=utf-8")
         self.wfile.write(html.encode("utf-8"))
 
+    def _allow_local_request(self) -> bool:
+        hosts = self.headers.get_all("Host", [])
+        allowed = {"localhost", "127.0.0.1", "::1"}
+        if HOST not in {"0.0.0.0", "::"}:
+            allowed.add(HOST.lower())
+        try:
+            host = urlparse(f"http://{hosts[0]}") if len(hosts) == 1 else None
+            valid_host = host is not None and host.hostname in allowed and (host.port or 80) == self.server.server_address[1] and not (host.username or host.password or host.path or host.query or host.fragment)
+        except ValueError:
+            valid_host = False
+        origins = self.headers.get_all("Origin", [])
+        valid_origin = not origins or (len(origins) == 1 and len(hosts) == 1 and origins[0].lower() == f"http://{hosts[0]}".lower())
+        valid_site = self.headers.get("Sec-Fetch-Site", "none").lower() != "cross-site"
+        if valid_host and valid_origin and valid_site:
+            return True
+        self._write_json({"ok": False, "error": "local_access_only", "message": "Use the dashboard's local HTTP origin; cross-origin and unrecognized Host requests are refused."}, status_code=403)
+        return False
+
     def do_OPTIONS(self) -> None:  # noqa: N802
-        self._set_headers(status_code=204)
+        if self._allow_local_request():
+            self._set_headers(status_code=204)
 
     def _server_timing_headers(self, payload: dict) -> dict[str, str]:
         timings = payload.get("timings_ms")
@@ -169,6 +187,8 @@ class Handler(BaseHTTPRequestHandler):
         return {"Server-Timing": ", ".join(entries)} if entries else {}
 
     def do_GET(self) -> None:  # noqa: N802
+        if not self._allow_local_request():
+            return
         path = urlparse(self.path).path
         if path in {"/", "/index.html"}:
             try:

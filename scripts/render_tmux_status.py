@@ -27,7 +27,7 @@ from dashboard_core.chatgpt_subscription import (
 from dashboard_core.config import DashboardConfig
 from dashboard_core.pipeline import recalc_dashboard
 from dashboard_core.runtime_html import seed_runtime_html
-from dashboard_core.tmux_status import build_tmux_status_snapshot, next_refresh_boundary, read_snapshot, render_tmux_status
+from dashboard_core.tmux_status import build_tmux_status_snapshot, cost_explanation, next_refresh_boundary, read_snapshot, render_tmux_status
 
 
 def parse_args() -> argparse.Namespace:
@@ -49,6 +49,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--max-width", type=int, default=None)
     parser.add_argument("--tmux-style", action="store_true")
+    parser.add_argument("--explain-cost", action="store_true", help="Show scoped canonical cost provenance instead of compact status")
     return parser.parse_args()
 
 
@@ -70,22 +71,10 @@ def build_config() -> DashboardConfig:
     if os.environ.get("AI_USAGE_DASHBOARD_HTML"):
         return config
 
-    runtime_html = REPO_ROOT / "tmp" / "index.runtime.html"
-    source_html = REPO_ROOT / "dashboard" / "index.html"
-    if not runtime_html.exists():
-        seed_runtime_html(source_html, runtime_html)
-    return DashboardConfig(
-        host=config.host,
-        port=config.port,
-        dashboard_html=runtime_html,
-        sessions_root=config.sessions_root,
-        claude_projects_root=config.claude_projects_root,
-        pi_agent_root=config.pi_agent_root,
-        dsh_home=config.dsh_home,
-        pricing_file=config.pricing_file,
-        parse_cache_file=config.parse_cache_file,
-        recalc_log_file=config.recalc_log_file,
-    )
+    source_html = (config.runtime_dir or REPO_ROOT) / "dashboard" / "index.html"
+    if not config.dashboard_html.exists():
+        seed_runtime_html(source_html, config.dashboard_html)
+    return config
 
 
 def atomic_write_json(path: Path, payload: dict) -> None:
@@ -274,6 +263,9 @@ def main() -> int:
                 )
                 return 0
 
+    if args.explain_cost:
+        print(cost_explanation(snapshot or {}))
+        return 0
     print(
         render_tmux_status(
             snapshot or {"health": "error"},

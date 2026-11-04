@@ -129,6 +129,7 @@ class DailyTotals:
     cost_complete: bool = True
     breakdowns: dict[BreakdownKey, BreakdownTotals] = field(default_factory=dict, repr=False)
     attributions: dict[AttributionKey, AttributionTotals] = field(default_factory=dict, repr=False)
+    investigation_rows: list[dict] = field(default_factory=list, repr=False)
 
     @property
     def cost_status(self) -> str:
@@ -229,6 +230,7 @@ class DailyTotals:
             bucket.cost_complete = bucket.cost_complete and cost_complete
 
     def merge_from(self, other: "DailyTotals") -> None:
+        self.investigation_rows.extend(dict(row) for row in other.investigation_rows)
         self.sessions += other.sessions
         self.add_usage(
             input_tokens=other.input_tokens,

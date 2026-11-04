@@ -34,7 +34,7 @@ browser helper once for this feature plus refresh and cost/model coverage.
 ## Gotchas
 
 - Each browser pass has a disposable profile; it never reads personal storage.
-- Provider changes also clamp date bounds. The harness selects All Available
+- Calendar/rolling ranges end today even when a provider is inactive; custom ranges are not clamped to observed activity. The harness selects All Available
   explicitly before comparing provider totals or narrowing dates.
 - An equivalent selected date interval can normalize to an existing preset;
   actual From/To bounds and visible totals are the assertion.

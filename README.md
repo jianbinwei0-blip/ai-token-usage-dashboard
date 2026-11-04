@@ -15,8 +15,12 @@ Supports Codex, Claude, PI Coding Agent, and DeepSeek Harness.
 - Activity Rhythm heatmap + time-of-day summary for the selected provider and date range
 - Daily breakdown table with sessions, input, output, cached, total token, and total cost columns
 - Range-scoped breakdown table grouped by `Agent CLI` + `Model`, including cost totals
+- Day → model cost investigation, followed by anonymous PI project → session details; unsupported/legacy usage remains visible and reconciled
+- Expandable native/rate-card/unpriced coverage and matched-period model/CLI change drivers
 - Horizontal bar chart (with rank, total tokens, and session count) above the table
-- Auto-recalc on browser refresh and every 5 minutes via local `localhost` endpoint
+- Auto-recalc on browser refresh and every 5 minutes via the same local HTTP origin, with a 20-second deadline, bounded retries and a visible Retry action
+- Current-local-day calendar presets, including genuinely empty current periods; All Available keeps the observed-history range
+- Shared saved settings, a read-only setup doctor, and validated durable-history migration/export/restore
 - Compact tmux status rendering for Today/MTD total tokens, MTD cost, and ChatGPT subscription quota/reset information via `scripts/render_tmux_status.py`, aligned to 5-minute refresh boundaries
 - Native macOS usage island with compact/expanded layouts, quota/credits, token and cost totals, refresh status, RAM and disk, powered by the same collector and formatter
 
@@ -73,7 +77,14 @@ open http://127.0.0.1:8765/
 
 ## Configuration
 
+Saved settings and environment overrides are shared by the web launcher, tmux collector and Finder-launched island. Explicit environment values take precedence over saved settings, then defaults. See [configuration and durable history](docs/configuration-and-history.md) for the version 1 schema, locations, migration, backups and recovery.
+
 Environment variables:
+
+- `AI_USAGE_SETTINGS_FILE` (optional explicit versioned settings file; invalid or missing explicit files fail closed)
+- `AI_USAGE_DASHBOARD_DIR` (effective runtime directory)
+- `AI_USAGE_DASHBOARD_URL` (local browser destination; otherwise follows the saved URL and explicit server host/port)
+- `AI_USAGE_HISTORY_FILE` (durable observed-history file; defaults to the platform user-data directory, separate from disposable runtime output)
 
 - `AI_USAGE_SERVER_HOST` (default: `127.0.0.1`)
 - `AI_USAGE_SERVER_PORT` (default: `8765`)
@@ -84,7 +95,7 @@ Environment variables:
 - `AI_USAGE_ZSTD_BIN` (optional path to a `zstd` executable used when Python lacks `compression.zstd`; common Homebrew paths and Node.js are automatic fallbacks)
 - `AI_USAGE_DASHBOARD_HTML` (default via `scripts/run_local.sh`: `<repo>/tmp/index.runtime.html`, seeded from `<repo>/dashboard/index.html`)
 - `AI_USAGE_PRICING_FILE` (optional JSON rate-card override file merged over the built-in pricing table)
-- `AI_USAGE_PARSE_CACHE_FILE` (persistent observed-session history and parse cache; default: `<repo>/tmp/recalc_parse_cache.json`)
+- `AI_USAGE_PARSE_CACHE_FILE` (deprecated explicit history-path alias; retained for isolated runs and compatibility, but `AI_USAGE_HISTORY_FILE` wins if both are set)
 - `AI_USAGE_RECALC_LOG_FILE` (optional JSONL file for persistent `/recalc` timing/error logs; default: `<repo>/tmp/recalc_timings.jsonl`)
 - `AI_USAGE_CHATGPT_USAGE` (`auto` or `off`; default: `auto`)
 - `AI_USAGE_CODEX_BIN` (Codex executable used for the app-server account API; default: `codex`)
@@ -209,13 +220,16 @@ curl http://127.0.0.1:8765/health
 - The dashboard is designed for local use and reads local session logs from Codex, Claude, PI, and DeepSeek Harness when present.
 - Daily rows in the injected dataset include `sessions`, `input_tokens`, `output_tokens`, `cached_tokens`, `total_tokens`, `input_cost_usd`, `output_cost_usd`, `cached_cost_usd`, `total_cost_usd`, `cost_complete`, and `breakdown_rows` grouped by `(agent_cli, model)`.
 - A built-in versioned pricing table is used for derived costs and can be overridden via `AI_USAGE_PRICING_FILE`. DSH first checks a `dsh` rate-card entry, then reuses known PI, Claude, or Codex model-family rates; an unmapped DSH model is reported as partial cost rather than trusted zero.
-- Codex usage keeps the latest `token_count` snapshot per session, extracts `originator`/`source` for the CLI bucket, and uses the latest observed `turn_context.payload.model` when present. Its `input_tokens` already includes `cached_input_tokens`, so only `max(input_tokens - cached_input_tokens, 0)` is billed at the uncached rate; cached tokens are billed once at the cache-read rate. Displayed token totals are unchanged.
+- Codex usage accounts for cumulative `token_count` deltas at each event's effective local date/hour and active model, with duplicate-snapshot, reset and last-usage fallback handling. Its `input_tokens` already includes `cached_input_tokens`, so only `max(input_tokens - cached_input_tokens, 0)` is billed at the uncached rate; cached tokens are billed once. Retained pre-event-accounting records without source logs stay in their original buckets with a coverage warning; accurate allocation cannot be reconstructed from a single old total.
 - ChatGPT subscription status is fetched through the Codex app server, and only normalized plan/quota/reset/credit metadata is cached. Subscription schema v3 includes available reset counts and grouped expiration timestamps for the native island. The server's count remains authoritative when detail rows are capped; missing dates and explicitly non-expiring credits remain distinct. Email addresses, account IDs, OAuth tokens, opaque reset-credit IDs, and backend reset titles/descriptions are not persisted by the dashboard.
 - Claude request usage is deduplicated by `(sessionId, requestId)`, keeps the highest observed token values for the request, computes `cached_tokens = cache_creation_input_tokens + cache_read_input_tokens`, and derives cost from the model rate card.
 - Claude-style context attribution is extracted when transcript events expose it: Skills from `<command-message>` slash commands, Agents/Subagents from `Agent`/`Task` tool calls, MCP servers from `mcp__server__method` tools, Tools from `tool_use` blocks, and Plugins / Extensions from namespaced slash commands plus plugin/extension metadata or tool namespaces. Attribution token/cost shares are estimated from the session totals for matching transcript events.
 - PI usage is read from `~/.pi/agent/sessions/**/*.jsonl`, tracks the active model via `model_change` events, computes `cached_tokens = cacheRead + cacheWrite`, prefers native `message.usage.cost.*` when present, and resumes parsing from the last verified byte offset when a session log grows append-only.
 - DeepSeek Harness usage is read from `$DSH_HOME/sessions/**/session.jsonl.zstd` or uncompressed `session.jsonl`. The collector excludes inherited fork seed prefixes, follows `request/header` provider/model changes, uses the final provider-reported usage per `(turn, step)` without double-counting its earlier usage chunk, retains usage-only interrupted steps, includes persisted `compaction/summary` model calls, and computes `cached_tokens = cacheReadTokens + cacheWriteTokens`. Only calls whose provider usage is persisted can be counted; current DSH title-generation records describe the request but do not persist its usage result.
-- Once a Codex, Claude, PI, or DSH session has been observed, its last recorded usage remains in the persistent parse history if the source session log is later deleted. To reset history that no longer has a source log, stop the service, delete `AI_USAGE_PARSE_CACHE_FILE`, and restart; sessions deleted before the dashboard first observed them cannot be recovered.
+- Once a Codex, Claude, PI, or DSH session has been observed, its usage remains in durable history if the source log is deleted. The default location migrates the old runtime parse history by validated copy, leaving the original and a backup intact. Corrupt/incompatible history stops recalculation instead of overwriting it with a partial scan. Use `scripts/usage_history.py` for validation, export and explicit backed-up restore; never remove history to clear a disposable cache. Sessions deleted before first observation cannot be recovered.
+- PI project/session labels are anonymous stable local identifiers, derived from session identity and cwd without publishing raw project paths, transcripts or session IDs. Historical rows without metadata and other collectors remain Unassigned / legacy. Session counts are session-days across daily ranges, not globally unique sessions.
+- Cost-source coverage is computed from canonical contributions, scoped to the selected provider/date range. PI native and derived usage remain separate even for the same model/day. Use the web cost explanation, island Cost sources disclosure, or `scripts/render_tmux_status.py --explain-cost` (with the usual source/account options) for provenance.
+- The HTTP service rejects unknown Host and cross-origin requests; it is a loopback-local utility, not an authenticated remote service. All collection surfaces share a durable-history lock and write snapshots atomically. The tracked starter is empty, not a personal usage snapshot.
 - Unmapped provider/model pricing is surfaced as partial cost in the API/UI instead of silently treated as trusted zero cost.
 - `/recalc` responses expose `Server-Timing` headers and `timings_ms` in the JSON payload, and the dashboard hero shows the latest refresh timing summary for quick diagnosis.
 - No third-party services are required.
@@ -226,7 +240,10 @@ Run the full local harness checks:
 
 ```bash
 python3 -m unittest discover -s scripts/tests
+node --test scripts/tests/dashboard_client.test.cjs
 ```
+
+`.github/workflows/verify.yml` runs Python 3.9/3.14 contracts, JavaScript regressions, verification-helper tests, isolated browser/API/CLI/history flows, and macOS bridge/installer/Swift/build checks. GUI, live account, sleep/wake and real installation journeys remain separate from these gates.
 
 For the native macOS app, also run:
 

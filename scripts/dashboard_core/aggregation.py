@@ -4,6 +4,7 @@ import datetime as dt
 from dataclasses import dataclass
 
 from .models import ActivityTotals, AttributionTotals, BreakdownTotals, DailyTotals, round_cost
+from .investigation import daily_investigation, empty_cost_sources, merge_cost_sources
 
 
 @dataclass
@@ -156,6 +157,7 @@ def _clone_daily_totals(usage_date: dt.date, values: DailyTotals) -> DailyTotals
             (bucket.category, bucket.name): _clone_attribution_totals(bucket)
             for bucket in values.attributions.values()
         },
+        investigation_rows=[dict(row) for row in values.investigation_rows],
     )
 
 
@@ -252,6 +254,7 @@ def materialize_daily(
     sessions = 0
     highest_single_day = 0
     cost_complete = True
+    cost_sources = empty_cost_sources()
 
     for usage_date, item in daily.items():
         if from_date is not None and usage_date < from_date:
@@ -260,6 +263,8 @@ def materialize_daily(
             continue
 
         values.append(item)
+        investigation_rows, daily_sources = daily_investigation(item)
+        merge_cost_sources(cost_sources, daily_sources)
         if include_rows:
             row = {
                 "date": usage_date.isoformat(),
@@ -275,6 +280,8 @@ def materialize_daily(
                 "cost_complete": item.cost_complete,
                 "cost_status": item.cost_status,
                 "breakdown_rows": serialize_breakdown_rows(item.breakdowns),
+                "investigation_rows": investigation_rows,
+                "cost_sources": daily_sources,
             }
             if item.attributions:
                 row["attribution_rows"] = serialize_attribution_rows(item.attributions)
@@ -351,6 +358,7 @@ def materialize_daily(
             "total_cost_usd": total_cost_usd,
             "cost_complete": cost_complete,
             "cost_status": "complete" if cost_complete else "partial",
+            "cost_sources": cost_sources,
             "days_with_usage": len(values),
             "sessions": sessions,
             "highest_single_day": highest_single_day,

@@ -333,8 +333,24 @@ final class IslandController: NSObject {
     }
 
     @objc func openDashboard() {
-        guard let url = URL(string: "http://127.0.0.1:8765") else { return }
-        NSWorkspace.shared.open(url)
+        Task {
+            do {
+                // The bundled Python reader owns the saved-settings schema and
+                // URL validation, just as it does for Finder-launched collection.
+                let data = try await BridgeService().run(mode: "dashboard-url")
+                let location = try JSONSerialization.jsonObject(with: data) as? [String: String]
+                guard let value = location?["dashboard_url"], let url = URL(string: value),
+                      ["http", "https"].contains(url.scheme ?? "") else {
+                    throw CocoaError(.fileReadCorruptFile)
+                }
+                NSWorkspace.shared.open(url)
+            } catch {
+                let alert = NSAlert()
+                alert.messageText = "Could not open the usage dashboard"
+                alert.informativeText = "Check shared settings with scripts/usage_doctor.py in the dashboard checkout. \(error.localizedDescription)"
+                alert.runModal()
+            }
+        }
     }
 
     @objc func showMenu() {

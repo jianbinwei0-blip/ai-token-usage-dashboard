@@ -170,6 +170,8 @@ def summary_for_rows(rows: list[dict[str, Any]], start_date: dt.date, end_date: 
     range_cached_tokens = 0
     range_cost_usd = 0.0
     pricing_complete = True
+    from .investigation import empty_cost_sources, merge_cost_sources
+    cost_sources = empty_cost_sources()
 
     for row in rows:
         row_date = parse_iso_date(row.get("date"), end_date)
@@ -190,6 +192,13 @@ def summary_for_rows(rows: list[dict[str, Any]], start_date: dt.date, end_date: 
         range_cached_tokens += cached_tokens
         range_cost_usd += float(row.get("total_cost_usd") or 0.0)
         pricing_complete = pricing_complete and bool(row.get("cost_complete", True))
+        sources = row.get("cost_sources")
+        if isinstance(sources, dict):
+            merge_cost_sources(cost_sources, sources)
+        else:
+            source = "rate_card" if bool(row.get("cost_complete", True)) else "unpriced"
+            cost_sources[source]["total_tokens"] += total_tokens
+            cost_sources[source]["total_cost_usd"] += float(row.get("total_cost_usd") or 0)
 
     return {
         "today_tokens": today_tokens,
@@ -202,7 +211,21 @@ def summary_for_rows(rows: list[dict[str, Any]], start_date: dt.date, end_date: 
         "range_cached_tokens": range_cached_tokens,
         "range_cost_usd": round(range_cost_usd, 9),
         "pricing_complete": pricing_complete,
+        "cost_sources": cost_sources,
     }
+
+
+def cost_explanation(snapshot: dict) -> str:
+    quality = snapshot.get("quality") or {}
+    sources = quality.get("cost_sources")
+    if not isinstance(sources, dict):
+        return "Cost source coverage unavailable; refresh the canonical collector."
+    labels = {"native": "Native-reported", "rate_card": "rate-card-derived", "unpriced": "unpriced"}
+    parts = [f"{labels[key]} {int((sources.get(key) or {}).get('total_tokens') or 0):,} tokens" for key in labels]
+    version = str(quality.get("pricing_version") or "unavailable")
+    window = snapshot.get("range") or {}
+    scope = str(snapshot.get("scope") or "combined")
+    return f"{scope}, {window.get('from', '?')} to {window.get('to', '?')}: " + "; ".join(parts) + f". Rate card {version}. Last collection {snapshot.get('generated_at') or 'unavailable'}. Estimated usage valuation, not an invoice or extra subscription charge."
 
 
 def build_tmux_status_snapshot(
@@ -272,6 +295,8 @@ def build_tmux_status_snapshot(
             "warning_count": warning_count,
             "pricing_source": str(pricing_metadata.get("source") or "unavailable"),
             "pricing_version": str(pricing_metadata.get("version") or ""),
+            "cost_sources": summary["cost_sources"],
+            "history_warnings": list((dataset_payload.get("history") or {}).get("warnings") or []),
         },
     }
     return snapshot

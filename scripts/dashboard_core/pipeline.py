@@ -22,10 +22,13 @@ from .collectors import (
     collect_pi_usage_data,
     load_persistent_parse_caches,
     persistent_parse_caches_dirty,
+    persistent_history_warnings,
     save_persistent_parse_caches,
 )
 from .config import DashboardConfig
 from .models import round_cost
+from .history import prepare_history
+from .storage import accounting_lock, atomic_write_text
 from .pricing import PricingCatalog
 from .render import (
     build_breakdown_table_body,
@@ -38,11 +41,11 @@ from .render import (
 
 _HTML_CACHE: dict[str, tuple[int, str]] = {}
 _DATASET_SCRIPT_CACHE: dict[str, tuple[str, str]] = {}
-_DATASET_SCRIPT_SCHEMA_VERSION = 1
+_DATASET_SCRIPT_SCHEMA_VERSION = 2
 _MODULE_DIR = Path(__file__).resolve().parent
 _DATASET_SOURCE_SIGNATURE = tuple(
     (name, (_MODULE_DIR / name).stat().st_size, (_MODULE_DIR / name).stat().st_mtime_ns)
-    for name in ("aggregation.py", "collectors.py", "models.py", "pipeline.py", "pricing.py", "render.py")
+    for name in ("aggregation.py", "collectors.py", "investigation.py", "models.py", "pipeline.py", "pricing.py", "render.py")
 )
 
 
@@ -64,7 +67,7 @@ def write_dashboard_html(path: Path, html: str) -> None:
     if cached is not None and cached[1] == html and path.exists():
         return
 
-    path.write_text(html, encoding="utf-8")
+    atomic_write_text(path, html)
     _HTML_CACHE[cache_key] = (path.stat().st_mtime_ns, html)
 
 
@@ -91,6 +94,7 @@ def _dataset_script_key(config: DashboardConfig, dataset: dict) -> str | None:
         "paths": dataset.get("paths"),
         "providers_available": dataset.get("providers_available"),
         "pricing": dataset.get("pricing"),
+        "history": dataset.get("history"),
     }
     encoded = json.dumps(key_payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
     return hashlib.blake2b(encoded, digest_size=16).hexdigest()
@@ -113,11 +117,8 @@ def _build_or_reuse_dataset_script(
     *,
     allow_reuse: bool,
 ) -> str:
-    cache_path = (
-        config.parse_cache_file.with_suffix(config.parse_cache_file.suffix + ".dataset")
-        if config.parse_cache_file is not None
-        else None
-    )
+    # Materialized HTML/JSON is disposable; retained history is not.
+    cache_path = config.dashboard_html.with_suffix(config.dashboard_html.suffix + ".dataset")
     cache_key = _dataset_script_key(config, dataset)
     if allow_reuse and cache_path is not None and cache_key is not None:
         cache_path_key = str(cache_path.resolve())
@@ -142,15 +143,24 @@ def _build_or_reuse_dataset_script(
         _DATASET_SCRIPT_CACHE[cache_path_key] = (cache_key, script)
         try:
             cache_path.parent.mkdir(parents=True, exist_ok=True)
-            tmp_path = cache_path.with_suffix(cache_path.suffix + ".tmp")
-            tmp_path.write_text(f"{cache_key}\n{script}", encoding="utf-8")
-            tmp_path.replace(cache_path)
+            atomic_write_text(cache_path, f"{cache_key}\n{script}")
         except OSError:
             pass
     return script
 
 
 def recalc_dashboard(
+    config: DashboardConfig,
+    now: dt.datetime | None = None,
+    *,
+    include_dataset: bool = False,
+) -> dict:
+    # HTTP, tmux and the island all enter here and share the same durable lock.
+    with accounting_lock(config.parse_cache_file or config.dashboard_html):
+        return _recalc_dashboard_locked(config, now, include_dataset=include_dataset)
+
+
+def _recalc_dashboard_locked(
     config: DashboardConfig,
     now: dt.datetime | None = None,
     *,
@@ -171,6 +181,7 @@ def recalc_dashboard(
     ytd_from = dt.date(today.year, 1, 1)
     pricing_catalog = measure("pricing_load", lambda: PricingCatalog.from_file(config.pricing_file))
 
+    prepare_history(config.parse_cache_file, getattr(config, "legacy_parse_cache_file", None))
     measure("load_persistent_parse_caches", lambda: load_persistent_parse_caches(config.parse_cache_file))
 
     def collect_provider_data() -> tuple[
@@ -344,25 +355,29 @@ def recalc_dashboard(
     breakdown_body = build_breakdown_table_body(combined_ytd.breakdown_rows)
 
     provider_flags = providers_available(
-        config.sessions_root.exists(),
-        config.claude_projects_root.exists(),
-        config.pi_agent_root.exists(),
-        (config.dsh_home / "sessions").exists(),
+        config.sessions_root.exists() or bool(codex_daily_all),
+        config.claude_projects_root.exists() or bool(claude_daily_all),
+        config.pi_agent_root.exists() or bool(pi_daily_all),
+        (config.dsh_home / "sessions").exists() or bool(dsh_daily_all),
     )
     pricing_metadata = pricing_catalog.metadata()
+    # Keep effective pricing provenance without publishing a full override path.
+    if str(pricing_metadata.get("source", "")).startswith("file:"):
+        pricing_metadata["source"] = "local override"
 
     dataset_payload = {
         "generated_at": now_utc.isoformat(),
         "timezone": now_local.tzname() or "local",
         "paths": {
-            "codex_sessions_root": str(config.sessions_root),
-            "claude_projects_root": str(config.claude_projects_root),
-            "pi_agent_root": str(config.pi_agent_root),
-            "pi_sessions_root": str(config.pi_agent_root / "sessions"),
-            "dsh_home": str(config.dsh_home),
-            "dsh_sessions_root": str(config.dsh_home / "sessions"),
-            "pricing_file": str(config.pricing_file) if config.pricing_file else None,
+            "codex_sessions_root": "Codex session logs",
+            "claude_projects_root": "Claude project logs",
+            "pi_agent_root": "PI local state",
+            "pi_sessions_root": "PI session logs",
+            "dsh_home": "DSH local state",
+            "dsh_sessions_root": "DSH session logs",
+            "pricing_file": "Local pricing override" if config.pricing_file else None,
         },
+        "history": {"schema": 1, "warnings": persistent_history_warnings()},
         "providers_available": provider_flags,
         "pricing": pricing_metadata,
         "providers": {
@@ -429,13 +444,8 @@ def recalc_dashboard(
         "cost_status": "complete" if cost_complete else "partial",
         "days_with_usage": days_count,
         "sessions": sessions_total,
-        "sources": {
-            "codex_sessions_root": str(config.sessions_root),
-            "claude_projects_root": str(config.claude_projects_root),
-            "pi_agent_root": str(config.pi_agent_root),
-            "dsh_home": str(config.dsh_home),
-            "pricing_file": str(config.pricing_file) if config.pricing_file else None,
-        },
+        "sources": dataset_payload["paths"],
+        "history": dataset_payload["history"],
         "providers_available": provider_flags,
         "pricing": pricing_metadata,
         "providers": {

@@ -147,6 +147,11 @@ struct ExpandedUsageView: View {
 
             VStack(alignment: .leading, spacing: 5) {
                 Text("Estimated cost is a usage valuation, not an additional subscription charge.")
+                if let explanation = model.snapshot?.costExplanation {
+                    DisclosureGroup("Cost sources") {
+                        Text(explanation).textSelection(.enabled)
+                    }
+                }
                 if model.snapshot?.pricingComplete == false && !usageFields.isEmpty {
                     Text("* Some usage has no configured price; the estimate is incomplete.")
                         .foregroundStyle(IslandPalette.warning)

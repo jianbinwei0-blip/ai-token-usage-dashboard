@@ -70,6 +70,7 @@ public struct UsageSnapshot: Codable, Equatable, Sendable {
     public let subscriptionFetchedAt: String?
     public let resetCredits: ResetCreditInfo?
     public let pricingComplete: Bool
+    public let costExplanation: String?
     public let scope: String
     public let providers: [String]
     public let text: String

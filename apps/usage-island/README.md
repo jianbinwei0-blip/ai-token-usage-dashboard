@@ -39,9 +39,9 @@ cd apps/usage-island
 ./scripts/install.sh
 ```
 
-Checks and builds first run `scripts/prepare-resources.sh`, which copies the repository's canonical formatter into the app's generated resources. That copy is gitignored; the installed bundle includes it and does not need the checkout.
+Checks and builds first run `scripts/prepare-resources.sh`, which copies the repository's canonical formatter and shared settings reader into generated resources. Those copies are gitignored; the installed bundle includes them and does not need the checkout to read saved settings or cached metrics.
 
-Quit the installed app before reinstalling. Previous installed versions are retained under `~/Library/Application Support/AIUsageIsland/Backups/`.
+Quit the installed app before reinstalling. Arguments are validated before mutation; a staged candidate is verified before replacement, and copy/verification/promotion/launch failures roll back. Previous installed versions are retained under `~/Library/Application Support/AIUsageIsland/Backups/`. Installation does not reset usage history, saved settings or login startup.
 
 `scripts/swift.sh` selects an installed SDK matching the current macOS major version, with `AI_USAGE_SDK` available as an override. On this machine it uses macOS 26.5 rather than the CLT's default macOS 27 SDK.
 
@@ -51,9 +51,11 @@ The native checks use a standalone executable because this CLT installation has 
 
 ## Data and refresh ownership
 
-- AI runtime: `~/.local/share/ai-token-usage-dashboard-daemon`
-- Shared AI cache: `tmp/tmux_status.json` within that runtime
-- Existing prices: `~/.config/ai-token-usage-dashboard/pricing.json`
+- Saved settings: `~/Library/Application Support/ai-token-usage-dashboard/settings.json`, or explicit `AI_USAGE_SETTINGS_FILE`; environment overrides saved values, then defaults
+- AI runtime: saved `runtime_dir`, else `~/.local/share/ai-token-usage-dashboard-daemon` when available, else the Documents checkout
+- Shared display cache: `tmp/tmux_status.json` within that runtime
+- Durable observed history: saved `history_file` / `AI_USAGE_HISTORY_FILE`, by default `~/Library/Application Support/ai-token-usage-dashboard/history.v1.json`; disposable cache cleanup does not remove it
+- Prices: explicit/saved pricing first, then conventional local pricing files, then built-ins; an explicitly selected file is never replaced by discovery
 - Formatter: repository-root `scripts/dashboard_core/tmux_status.py`, copied into the bundle at build time
 - Resource formulas: bundled `Sources/UsageIslandApp/Resources/Bridge/status_resources.sh`; no runtime dependency on tmux or SketchyBar configuration
 
@@ -65,7 +67,9 @@ Reset details require subscription snapshot schema v3. If using a separate backg
 
 The runtime is outside Documents to support locked-session access. The installed app bundles its adapter and formatter and does not depend on the source checkout or a running tmux session. If the daemon runtime is absent, the adapter can fall back to the existing Documents dashboard checkout, with that location's usual macOS access limitations.
 
-Overrides: `AI_USAGE_DASHBOARD_DIR`, `AI_USAGE_CACHE_FILE`, `AI_USAGE_PYTHON`, and developer-only `AI_USAGE_BRIDGE_DIR`. Finder launches do not inherit arbitrary shell exports.
+Overrides include `AI_USAGE_DASHBOARD_DIR`, `AI_USAGE_DASHBOARD_URL`, `AI_USAGE_CACHE_FILE`, `AI_USAGE_PYTHON`, and developer-only `AI_USAGE_BRIDGE_DIR`. Finder does not inherit arbitrary shell exports: use saved settings for identical Finder/terminal behavior. Open Dashboard resolves the shared validated local URL, including custom ports. Cost sources expands the same scoped native/derived/unpriced coverage as the web and terminal explanation. Older display snapshots can report unavailable coverage until refreshed.
+
+See [shared configuration and durable history](../../docs/configuration-and-history.md) for settings schema, non-destructive migration, backup/restore, read-only `scripts/usage_doctor.py`, and runtime-drift guidance.
 
 ## Diagnostics and UI smoke checks
 

@@ -19,23 +19,54 @@ import sys
 
 import dashboard_status_formatter as formatter
 
+# The build generates this resource verbatim from dashboard_core/settings.py.
+# A source-tree fallback makes unprepared developer/test runs convenient, but an
+# installed app never depends on an external runtime to read its saved settings.
+try:
+    import dashboard_settings as settings_module
+except ModuleNotFoundError as error:
+    if error.name != "dashboard_settings":
+        raise
+    checkout = next((p for p in Path(__file__).resolve().parents
+                     if (p / "scripts/dashboard_core/settings.py").is_file()), None)
+    if checkout is None:
+        raise SystemExit("Shared settings reader is missing. Rebuild/reinstall the app from matching sources.") from None
+    sys.path.insert(0, str(checkout / "scripts"))
+    from dashboard_core import settings as settings_module
+
 HOME = Path.home()
-RUNTIME = HOME / ".local/share/ai-token-usage-dashboard-daemon"
-DASHBOARD = Path(os.environ.get("AI_USAGE_DASHBOARD_DIR", str(
-    RUNTIME if (RUNTIME / "scripts/render_tmux_status.py").is_file()
-    else HOME / "Documents/ai-token-usage-dashboard"
-)))
-CACHE = Path(os.environ.get("AI_USAGE_CACHE_FILE", str(DASHBOARD / "tmp/tmux_status.json")))
-PRICING = HOME / ".config/ai-token-usage-dashboard/pricing.json"
 ACTIVE_CHILDREN: set[subprocess.Popen] = set()
 
 
-def environment() -> dict[str, str]:
+def configuration() -> settings_module.SharedSettings:
+    # Resolve lazily: importing formatter/test helpers must not read user settings.
+    return settings_module.load_settings()
+
+
+def cache_path(settings: settings_module.SharedSettings) -> Path:
+    return Path(os.environ.get("AI_USAGE_CACHE_FILE", str(settings.runtime_dir / "tmp/tmux_status.json"))).expanduser()
+
+
+def environment(settings: settings_module.SharedSettings | None = None, *, include_settings: bool = True) -> dict[str, str]:
     env = os.environ.copy()
     env["PATH"] = "/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
     env["PYTHONDONTWRITEBYTECODE"] = "1"
-    if PRICING.is_file():
-        env["AI_USAGE_PRICING_FILE"] = str(PRICING)
+    if include_settings:
+        settings = settings if settings is not None else configuration()
+        defaults = {
+            "AI_USAGE_DASHBOARD_DIR": str(settings.runtime_dir),
+            "AI_USAGE_DASHBOARD_URL": settings.dashboard_url,
+            "AI_USAGE_SERVER_HOST": settings.server_host,
+            "AI_USAGE_SERVER_PORT": str(settings.server_port),
+            "AI_USAGE_CODEX_SESSIONS_ROOT": str(settings.codex_sessions_root),
+            "AI_USAGE_CLAUDE_PROJECTS_ROOT": str(settings.claude_projects_root),
+            "AI_USAGE_PI_AGENT_ROOT": str(settings.pi_agent_root),
+            "AI_USAGE_DSH_HOME": str(settings.dsh_home),
+            "AI_USAGE_PRICING_FILE": str(settings.pricing_file) if settings.pricing_file is not None else "",
+            "AI_USAGE_CACHE_FILE": str(cache_path(settings)),
+        }
+        for key, value in defaults.items():
+            env.setdefault(key, value)
     return env
 
 
@@ -62,7 +93,7 @@ def run_command(arguments: list[str], *, timeout: float, cwd: Path | None = None
                 env: dict[str, str] | None = None) -> tuple[int, str]:
     # A process group lets timeouts/quit clean up the collector's app-server too.
     child = subprocess.Popen(
-        arguments, cwd=cwd, env=env or environment(),
+        arguments, cwd=cwd, env=env if env is not None else environment(),
         stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
         text=True, start_new_session=True,
     )
@@ -79,16 +110,17 @@ def run_command(arguments: list[str], *, timeout: float, cwd: Path | None = None
         ACTIVE_CHILDREN.discard(child)
 
 
-def refresh_cache() -> bool:
+def refresh_cache(settings: settings_module.SharedSettings | None = None) -> bool:
     try:
+        settings = settings if settings is not None else configuration()
         code, output = run_command([
-            sys.executable, str(DASHBOARD / "scripts/render_tmux_status.py"),
-            "--cache-file", str(CACHE), "--scope", "combined", "--range", "mtd",
+            sys.executable, str(settings.runtime_dir / "scripts/render_tmux_status.py"),
+            "--cache-file", str(cache_path(settings)), "--scope", "combined", "--range", "mtd",
             "--refresh-interval-minutes", "5", "--max-width", "96",
-        ], timeout=40, cwd=DASHBOARD)
+        ], timeout=40, cwd=settings.runtime_dir, env=environment(settings))
         # The existing collector may return exit 0 with an explicit error label.
         return code == 0 and not re.match(r"AI(?: combined)? error\b", output)
-    except (OSError, subprocess.SubprocessError):
+    except (OSError, subprocess.SubprocessError, settings_module.SettingsError):
         return False
 
 
@@ -213,6 +245,7 @@ def payload(snapshot: dict | None, *, failed: bool = False,
             subscription_fetched_at=subscription.get("fetched_at") if isinstance(subscription, dict) else None,
             reset_credits=reset_credit_payload(subscription, scope=str(snapshot.get("scope") or "combined")),
             pricing_complete=bool((snapshot.get("quality") or {}).get("pricing_complete", True)),
+            cost_explanation=formatter.cost_explanation(snapshot),
             scope=str(snapshot.get("scope") or "combined"),
             providers=[str(p) for p in snapshot.get("providers", [])],
             text=text, fields=fields_for_text(text), message=message,
@@ -225,7 +258,7 @@ def payload(snapshot: dict | None, *, failed: bool = False,
 
 def resource_payload() -> dict:
     try:
-        env = environment()
+        env = environment(include_settings=False)
         # Isolate the helper's disk cache from tmux's concurrent refreshes.
         env["XDG_CACHE_HOME"] = str(HOME / "Library/Caches/AIUsageIsland")
         code, text = run_command(
@@ -243,16 +276,28 @@ def resource_payload() -> dict:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("mode", choices=("ai", "resources"), nargs="?", default="ai")
+    parser.add_argument("mode", choices=("ai", "resources", "dashboard-url"), nargs="?", default="ai")
     parser.add_argument("--refresh", action="store_true", help="Use the existing five-minute collector cache/lock.")
     args = parser.parse_args()
+    if args.refresh and args.mode != "ai":
+        parser.error("--refresh is only valid in ai mode")
     signal.signal(signal.SIGTERM, shutdown)
     signal.signal(signal.SIGINT, shutdown)
     if args.mode == "resources":
         result = resource_payload()
     else:
-        failed = args.refresh and not refresh_cache()
-        result = payload(read_cache(CACHE), failed=failed)
+        try:
+            settings = configuration()
+            if args.mode == "dashboard-url":
+                result = {"dashboard_url": settings.dashboard_url}
+            else:
+                failed = args.refresh and not refresh_cache(settings)
+                result = payload(read_cache(cache_path(settings)), failed=failed)
+        except settings_module.SettingsError:
+            if args.mode == "dashboard-url":
+                parser.exit(2, "Invalid shared settings. Run scripts/usage_doctor.py in the dashboard checkout.\n")
+            result = payload(None)
+            result["message"] = "Invalid shared settings. Run scripts/usage_doctor.py in the dashboard checkout; no collection was attempted."
     print(json.dumps(result, ensure_ascii=False, allow_nan=False))
 
 

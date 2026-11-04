@@ -55,6 +55,14 @@ HTML_TEMPLATE = """<!DOCTYPE html>
 
 
 class HarnessContractsTests(unittest.TestCase):
+    def _accounting_rows(self, rows):
+        # Preserve exact old accounting assertions while checking the additive view contract.
+        for row in rows:
+            self.assertEqual(sum(item['total_tokens'] for item in row['investigation_rows']), row['total_tokens'])
+            self.assertAlmostEqual(sum(item['total_cost_usd'] for item in row['investigation_rows']), row['total_cost_usd'], places=9)
+            self.assertEqual(sum(source['total_tokens'] for source in row['cost_sources'].values()), row['total_tokens'])
+        return [{key: value for key, value in row.items() if key not in {'investigation_rows', 'cost_sources'}} for row in rows]
+
     def _write_jsonl(self, path: Path, rows: list[dict]) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
         with path.open("w", encoding="utf-8") as handle:
@@ -178,7 +186,7 @@ class HarnessContractsTests(unittest.TestCase):
             combined_rows = dataset["providers"]["combined"]["rows"]
             claude_day = datetime.fromisoformat("2026-03-03T05:00:00+00:00").astimezone().date().isoformat()
             self.assertEqual(
-                combined_rows,
+                self._accounting_rows(combined_rows),
                 [
                     {
                         "date": "2026-03-03",
@@ -612,7 +620,7 @@ class HarnessContractsTests(unittest.TestCase):
                 {"codex": True, "claude": False, "pi": True, "dsh": False, "combined": True},
             )
             self.assertEqual(
-                dataset["providers"]["pi"]["rows"],
+                self._accounting_rows(dataset["providers"]["pi"]["rows"]),
                 [
                     {
                         "date": "2026-03-03",
@@ -725,10 +733,11 @@ class HarnessContractsTests(unittest.TestCase):
             self.assertEqual(payload["ytd_total_tokens"], 40)
             self.assertEqual(payload["providers"]["dsh"]["ytd_total_tokens"], 40)
             self.assertEqual(payload["providers"]["combined"]["ytd_total_tokens"], 40)
-            self.assertEqual(dataset["paths"]["dsh_home"], str(dsh_home))
-            self.assertEqual(dataset["paths"]["dsh_sessions_root"], str(dsh_home / "sessions"))
+            self.assertEqual(dataset["paths"]["dsh_home"], "DSH local state")
+            self.assertEqual(dataset["paths"]["dsh_sessions_root"], "DSH session logs")
+            self.assertNotIn(str(root), json.dumps(dataset))
             self.assertEqual(
-                dataset["providers"]["dsh"]["rows"],
+                self._accounting_rows(dataset["providers"]["dsh"]["rows"]),
                 [
                     {
                         "date": usage_day,

@@ -28,6 +28,7 @@ Use only a run created by pstack_verify.py; the live 8765 instance is forbidden.
 - [Refresh and usable data](pstack-refresh.md).
 - [Provider and date filters](pstack-filters.md).
 - [Spend and model breakdown](pstack-costs.md).
+- [Day, PI project/session investigation and provenance](pstack-investigation.md).
 - [Append and retained history](pstack-history.md).
 - [Tmux status CLI](pstack-tmux.md).
 

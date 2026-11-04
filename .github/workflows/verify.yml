@@ -1,0 +1,65 @@
+name: Verify local accounting
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: verify-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  accounting:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python: ['3.9', '3.14']
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Python accounting and contract regressions
+        run: python -m unittest discover -s scripts/tests -v
+      - name: Client refresh, calendar and investigation regressions
+        run: node --test scripts/tests/dashboard_client.test.cjs
+      - name: Verification helper safety checks
+        run: |
+          python .pi/skills/pstack-verify-ai-token-usage-dashboard/scripts/pstack_verify_tests.py
+          python .pi/skills/pstack-verify-usage-island/scripts/pstack_island_tests.py
+      - name: Isolated browser, API, CLI and retained history
+        if: matrix.python == '3.14'
+        env:
+          PSTACK_CHROME_BIN: /usr/bin/google-chrome
+        run: |
+          set -euo pipefail
+          H=.pi/skills/pstack-verify-ai-token-usage-dashboard/scripts/pstack_verify.py
+          W=.pi/skills/pstack-verify-ai-token-usage-dashboard/scripts/pstack_web.mjs
+          RUN="$(python "$H" start | python -c 'import json,sys; print(json.load(sys.stdin)["runDir"])')"
+          trap 'python "$H" stop "$RUN"' EXIT
+          python "$H" doctor "$RUN"
+          python "$H" api "$RUN"
+          node "$W" "$RUN"
+          python "$H" tmux "$RUN"
+          python "$H" history "$RUN"
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: isolated-evidence-${{ matrix.python }}
+          path: tmp/pstack-verification/**/pstack-evidence/
+
+  native:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.14'
+      - name: Canonical resources, bridge, installer rollback, Swift checks and app build
+        run: AI_USAGE_PYTHON="$(command -v python3)" apps/usage-island/scripts/check.sh

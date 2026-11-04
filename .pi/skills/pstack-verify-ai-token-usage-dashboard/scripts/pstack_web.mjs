@@ -128,6 +128,26 @@ try{
  await choose('#usageProvider','pi');await choose('#usageRangePreset','all');
  view=await snapshot();assert.equal(view.tokens,total('pi').tokens);assert.equal(view.spend,total('pi').cost);
  assert(view.models.includes('gpt-5.4')&&!view.models.includes('claude-sonnet-4-6'));
+ // Public controls and native keyboard events prove the new investigation path.
+ await choose('#explorerDay',state.today);
+ const investigation=await evaluate(`(()=>{const text=s=>document.querySelector(s)?.textContent||'';return {summary:text('#explorerSummary'),models:text('#explorerModels'),projects:text('#explorerProjects'),valuation:text('#valuationDetails'),comparison:text('#periodComparison')};})()`);
+ assert(investigation.summary.includes('350,000')&&investigation.models.includes('gpt-5.4'));
+ assert(/Project [0-9a-f]{8}/.test(investigation.projects)&&/Session [0-9a-f]{8}/.test(investigation.projects),JSON.stringify(investigation));
+ assert(!investigation.projects.includes('/pstack-fixture'));
+ assert(investigation.valuation.includes('350,000')&&investigation.valuation.includes('Native-reported'));
+ assert(investigation.comparison.includes('unknown')||investigation.comparison.includes('unavailable'));
+ await evaluate("document.querySelector('#explorerProjects summary').focus()");
+ await send('Input.dispatchKeyEvent',{type:'keyDown',key:'Enter',code:'Enter',windowsVirtualKeyCode:13,text:'\r',unmodifiedText:'\r'});
+ await send('Input.dispatchKeyEvent',{type:'keyUp',key:'Enter',code:'Enter',windowsVirtualKeyCode:13});
+ assert.equal(await evaluate("document.querySelector('#explorerProjects details').open"),true);
+ await send('Emulation.setDeviceMetricsOverride',{width:390,height:844,deviceScaleFactor:1,mobile:false});
+ await evaluate("document.querySelector('#costExplorer').scrollIntoView({block:'start'})");
+ const narrow=await evaluate("({width:innerWidth,hidden:[...document.querySelectorAll('.table-wrap,.foot')].filter(e=>getComputedStyle(e).display==='none').length,sessionVisible:document.querySelector('#explorerProjects details').open,summaryPosition:getComputedStyle(document.querySelector('.summary-strip')).position})");
+ assert.equal(narrow.hidden,0);assert.equal(narrow.sessionVisible,true);assert.equal(narrow.summaryPosition,'static');
+ actions.push({step:'pstack-day-project-session-keyboard-narrow',investigation,narrow});
+ await capture('pstack-investigation-narrow.png');
+ await send('Emulation.setDeviceMetricsOverride',{width:1440,height:1100,deviceScaleFactor:1,mobile:false});
+ await evaluate('window.scrollTo(0,0)');
  const oldNavigationCount=navigations,oldRecalcCount=network.length;
  await send('Page.reload');
  await until(`(${readyExpression})&&document.querySelector('#usageProvider')?.value==='pi'`,'provider persists through user reload',()=>navigations>=oldNavigationCount+2&&network.length>oldRecalcCount);

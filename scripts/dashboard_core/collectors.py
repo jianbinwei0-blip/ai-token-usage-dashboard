@@ -11,6 +11,9 @@ from collections import Counter, defaultdict
 from pathlib import Path
 
 from .models import ActivityTotals, BreakdownTotals, DailyTotals, round_cost
+from .investigation import opaque_identity
+from .history import read_history
+from .storage import atomic_write_text
 from .pricing import PricingCatalog, native_cost_values, normalize_native_cost
 
 
@@ -59,6 +62,8 @@ _JSONL_FILE_INDEX_CACHE: dict[str, tuple[dict[str, int], tuple[str, ...]]] = {}
 _PERSISTENT_CACHE_VERSION = 5
 _PERSISTENT_CACHE_LOADED_FROM: str | None = None
 _PERSISTENT_CACHE_DIRTY = False
+_PERSISTENT_CACHE_FILE_SIGNATURE: tuple[int, int] | None = None
+_PERSISTENT_HISTORY_WARNINGS: list[str] = []
 _PI_APPEND_FAST_PATH_WINDOW_BYTES = 4096
 
 
@@ -231,6 +236,8 @@ def _deserialize_claude_attribution_event(event: object) -> ClaudeAttributionEve
 def _serialize_codex_contribution(contribution: CodexContribution | None) -> list[object] | None:
     if contribution is None:
         return None
+    if len(contribution) == 2 and contribution[0] == "codex-events-v1":
+        return ["codex-events-v1", [_serialize_codex_contribution(row) for row in contribution[1]]]
     (
         usage_date,
         activity_date,
@@ -284,6 +291,13 @@ def _legacy_codex_dates(usage_date_value: object, timestamp_value: object) -> tu
 def _deserialize_codex_contribution(contribution: object) -> CodexContribution | None:
     if contribution is None:
         return None
+    if isinstance(contribution, (list, tuple)) and len(contribution) == 2 and contribution[0] == "codex-events-v1":
+        if not isinstance(contribution[1], (list, tuple)):
+            return None
+        rows = tuple(_deserialize_codex_contribution(row) for row in contribution[1])
+        if any(row is None or len(row) != 15 for row in rows):
+            return None
+        return ("codex-events-v1", rows)
     if isinstance(contribution, list) and len(contribution) == 16 and contribution[0] == "t":
         try:
             usage_date = dt.date.fromordinal(contribution[1])
@@ -516,6 +530,8 @@ def _serialize_pi_activity_row(row: object) -> list[object] | None:
 
 def empty_pi_contribution(session_id: str) -> dict[str, object]:
     return {
+        "identity_schema": 2,
+        "project_id": "",
         "session_id": normalized_bucket_value(session_id, "unknown-session"),
         "active_model": DEFAULT_MODEL,
         "offset": 0,
@@ -534,6 +550,8 @@ def serialize_pi_contribution(contribution: object) -> dict[str, object] | None:
     if not isinstance(usage_rows, list) or not isinstance(activity_rows, list):
         return None
     return {
+        "identity_schema": safe_non_negative_int(contribution.get("identity_schema")),
+        "project_id": contribution.get("project_id", "") if re.fullmatch(r"[0-9a-f]{24}", str(contribution.get("project_id", ""))) else "",
         "session_id": normalized_bucket_value(contribution.get("session_id"), "unknown-session"),
         "active_model": normalized_bucket_value(contribution.get("active_model"), DEFAULT_MODEL),
         "offset": safe_non_negative_int(contribution.get("offset")),
@@ -559,6 +577,8 @@ def deserialize_pi_contribution(contribution: object) -> dict[str, object] | Non
     activity_rows = contribution.get("activity_rows")
     if not isinstance(usage_rows, list) or not isinstance(activity_rows, list):
         return None
+    contribution["identity_schema"] = safe_non_negative_int(contribution.get("identity_schema"))
+    contribution["project_id"] = contribution.get("project_id", "") if re.fullmatch(r"[0-9a-f]{24}", str(contribution.get("project_id", ""))) else ""
     contribution["session_id"] = normalized_bucket_value(contribution.get("session_id"), "unknown-session")
     contribution["active_model"] = normalized_bucket_value(contribution.get("active_model"), DEFAULT_MODEL)
     contribution["offset"] = safe_non_negative_int(contribution.get("offset"))
@@ -588,12 +608,23 @@ def update_pi_contribution_signatures(file_path: Path, contribution: dict[str, o
     contribution["boundary_signature"] = _read_file_signature_window(file_path, boundary_start, processed_offset)
 
 
+def persistent_history_warnings() -> list[str]:
+    warnings = list(_PERSISTENT_HISTORY_WARNINGS)
+    if any(entry[3] is not None and not (len(entry[3]) == 2 and entry[3][0] == "codex-events-v1") for entry in _CODEX_SESSION_USAGE_CACHE.values()):
+        warnings.append("Some retained Codex records predate event-time accounting. Original date/model allocation is retained when source logs are no longer available.")
+    return warnings
+
+
 def load_persistent_parse_caches(cache_path: Path | None) -> None:
-    global _PERSISTENT_CACHE_LOADED_FROM, _PERSISTENT_CACHE_DIRTY
+    global _PERSISTENT_CACHE_LOADED_FROM, _PERSISTENT_CACHE_DIRTY, _PERSISTENT_CACHE_FILE_SIGNATURE, _PERSISTENT_HISTORY_WARNINGS
 
     target = str(cache_path.resolve()) if cache_path is not None else None
-    if _PERSISTENT_CACHE_LOADED_FROM == target:
+    stat = cache_path.stat() if cache_path is not None and cache_path.exists() else None
+    signature = (stat.st_size, stat.st_mtime_ns) if stat is not None else None
+    if _PERSISTENT_CACHE_LOADED_FROM == target and _PERSISTENT_CACHE_FILE_SIGNATURE == signature:
         return
+    # Validate before replacing any in-memory history or touching the source file.
+    payload = read_history(cache_path) if stat is not None else None
 
     _CODEX_SESSION_USAGE_CACHE.clear()
     _CLAUDE_REQUEST_RECORDS_CACHE.clear()
@@ -602,18 +633,14 @@ def load_persistent_parse_caches(cache_path: Path | None) -> None:
     _DSH_SESSION_RECORDS_CACHE.clear()
     _JSONL_FILE_INDEX_CACHE.clear()
     _PERSISTENT_CACHE_LOADED_FROM = target
+    _PERSISTENT_CACHE_FILE_SIGNATURE = signature
     _PERSISTENT_CACHE_DIRTY = False
+    _PERSISTENT_HISTORY_WARNINGS = []
 
-    if cache_path is None or not cache_path.exists():
+    if payload is None:
+        _PERSISTENT_HISTORY_WARNINGS = ["This history began with a missing or new history file. Only readable logs could be recovered. Restore a validated backup if older usage is expected."]
         return
-
-    try:
-        payload = json.loads(cache_path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return
-
-    if not isinstance(payload, dict) or payload.get("version") not in {4, _PERSISTENT_CACHE_VERSION}:
-        return
+    _PERSISTENT_HISTORY_WARNINGS = [note for note in payload.get("coverage_notes", []) if isinstance(note, str)]
     if payload.get("version") != _PERSISTENT_CACHE_VERSION:
         _PERSISTENT_CACHE_DIRTY = True
 
@@ -659,8 +686,8 @@ def load_persistent_parse_caches(cache_path: Path | None) -> None:
                 contribution_value is not None
                 and not (
                     isinstance(contribution_value, list)
-                    and len(contribution_value) == 16
-                    and contribution_value[0] == "t"
+                    and ((len(contribution_value) == 16 and contribution_value[0] == "t")
+                         or (len(contribution_value) == 2 and contribution_value[0] == "codex-events-v1"))
                 )
             ):
                 _PERSISTENT_CACHE_DIRTY = True
@@ -764,13 +791,15 @@ def load_persistent_parse_caches(cache_path: Path | None) -> None:
 
 
 def save_persistent_parse_caches(cache_path: Path | None) -> None:
-    global _PERSISTENT_CACHE_DIRTY
+    global _PERSISTENT_CACHE_DIRTY, _PERSISTENT_CACHE_FILE_SIGNATURE
 
-    if cache_path is None or not _PERSISTENT_CACHE_DIRTY:
+    if cache_path is None or (not _PERSISTENT_CACHE_DIRTY and cache_path.exists()):
         return
 
     payload = {
         "version": _PERSISTENT_CACHE_VERSION,
+        "history_schema": 1,
+        "coverage_notes": _PERSISTENT_HISTORY_WARNINGS,
         "file_indexes": {
             root_path: {
                 "directories": directories,
@@ -821,14 +850,10 @@ def save_persistent_parse_caches(cache_path: Path | None) -> None:
         },
     }
 
-    try:
-        cache_path.parent.mkdir(parents=True, exist_ok=True)
-        tmp_path = cache_path.with_suffix(cache_path.suffix + ".tmp")
-        tmp_path.write_text(json.dumps(payload, separators=(",", ":")), encoding="utf-8")
-        tmp_path.replace(cache_path)
-        _PERSISTENT_CACHE_DIRTY = False
-    except OSError:
-        return
+    atomic_write_text(cache_path, json.dumps(payload, separators=(",", ":"), allow_nan=False))
+    stat = cache_path.stat()
+    _PERSISTENT_CACHE_FILE_SIGNATURE = (stat.st_size, stat.st_mtime_ns)
+    _PERSISTENT_CACHE_DIRTY = False
 
 
 def parse_codex_rollout_timestamp_local(session_path: Path) -> dt.datetime | None:
@@ -836,11 +861,19 @@ def parse_codex_rollout_timestamp_local(session_path: Path) -> dt.datetime | Non
     if not match:
         return None
     year, month, day, hour, minute, second = (int(part) for part in match.groups())
-    return dt.datetime(year, month, day, hour, minute, second, tzinfo=LOCAL_TIMEZONE)
+    try:
+        # Rollout names contain local wall time; use the offset for that date,
+        # not the offset at collector startup (which may be across DST).
+        return dt.datetime(year, month, day, hour, minute, second).astimezone()
+    except ValueError:
+        return None
 
 
 def codex_usage_date_from_path(session_path: Path, sessions_root: Path) -> dt.date | None:
-    relative = session_path.relative_to(sessions_root).parts
+    try:
+        relative = session_path.relative_to(sessions_root).parts
+    except ValueError:
+        return None
     if len(relative) < 4:
         return None
     try:
@@ -1017,108 +1050,170 @@ def pricing_cache_key(pricing_catalog: PricingCatalog) -> str:
     return f"{pricing_catalog.source}|{pricing_catalog.version}|{pricing_catalog.fingerprint}"
 
 
-def parse_codex_session_usage(session_path: Path) -> dict[str, int | str | dt.datetime] | None:
-    latest_usage: dict[str, int] | None = None
+def _codex_token_usage(value: object) -> dict[str, int] | None:
+    if not isinstance(value, dict):
+        return None
+    fields = {
+        "input_tokens": "input_tokens",
+        "cached_tokens": "cached_input_tokens",
+        "output_tokens": "output_tokens",
+        "total_tokens": "total_tokens",
+    }
+    valid = {
+        key: value[source]
+        for key, source in fields.items()
+        if isinstance(value.get(source), int)
+        and not isinstance(value[source], bool)
+        and value[source] >= 0
+    }
+    if not valid:
+        return None
+    counts = {key: valid.get(key, 0) for key in fields}
+    # Cached input and reasoning output are already included in input/output.
+    if not counts["total_tokens"]:
+        counts["total_tokens"] = counts["input_tokens"] + counts["output_tokens"]
+    return counts
+
+
+def parse_codex_session_usage(session_path: Path) -> dict[str, object] | None:
+    """Return a compatible session summary plus usage deltas in log order.
+
+    Each delta keeps its effective model and local timestamp. A later context or
+    a repeated cumulative snapshot must never reassign previously observed use.
+    """
+    events: list[dict[str, object]] = []
+    cumulative: dict[str, int] = {}
+    accounted: dict[str, int] = {}
+    seen_snapshots: set[tuple[object, ...]] = set()
+    seen_fallbacks: set[tuple[object, ...]] = set()
     latest_model = DEFAULT_MODEL
     agent_cli = "codex"
     session_id = session_path.stem
     activity_timestamp = parse_codex_rollout_timestamp_local(session_path)
+    last_timestamp = activity_timestamp
 
     with session_path.open("r", encoding="utf-8", errors="ignore") as handle:
         for line in handle:
-            line = line.strip()
-            if not line:
-                continue
             try:
                 event = json.loads(line)
             except json.JSONDecodeError:
                 continue
+            if not isinstance(event, dict):
+                continue
 
-            event_timestamp = parse_timestamp_local(event.get("timestamp"))
-            if activity_timestamp is None and event_timestamp is not None:
-                activity_timestamp = event_timestamp
-
+            payload = event.get("payload")
+            payload = payload if isinstance(payload, dict) else {}
             event_type = event.get("type")
-
+            event_timestamp = (
+                parse_timestamp_local(event.get("timestamp"))
+                or parse_timestamp_local(payload.get("timestamp"))
+            )
+            if event_timestamp is not None:
+                # Replayed start metadata is not evidence that a resumed context
+                # moved back to the session's original day.
+                if event_type != "session_meta" or last_timestamp is None or event_timestamp >= last_timestamp:
+                    last_timestamp = event_timestamp
+                if activity_timestamp is None:
+                    activity_timestamp = event_timestamp
             if event_type == "session_meta":
-                payload = event.get("payload") or {}
-                if isinstance(payload, dict):
-                    session_id = normalized_bucket_value(payload.get("id"), session_id)
-                    agent_cli = normalized_bucket_value(payload.get("originator"), "")
-                    if not agent_cli:
-                        agent_cli = normalized_bucket_value(payload.get("source"), "codex")
-                    payload_timestamp = parse_timestamp_local(payload.get("timestamp"))
-                    if payload_timestamp is not None:
-                        activity_timestamp = payload_timestamp
-                    elif activity_timestamp is None and event_timestamp is not None:
-                        activity_timestamp = event_timestamp
+                session_id = normalized_bucket_value(payload.get("id"), session_id)
+                agent_cli = normalized_bucket_value(payload.get("originator"), "")
+                if not agent_cli:
+                    agent_cli = normalized_bucket_value(payload.get("source"), "codex")
+                payload_timestamp = parse_timestamp_local(payload.get("timestamp"))
+                if payload_timestamp is not None:
+                    activity_timestamp = payload_timestamp
+                    if last_timestamp is None:
+                        last_timestamp = event_timestamp or payload_timestamp
                 continue
 
             if event_type == "turn_context":
-                payload = event.get("payload") or {}
-                if isinstance(payload, dict):
-                    latest_model = normalized_bucket_value(payload.get("model"), latest_model)
+                latest_model = normalized_bucket_value(payload.get("model"), latest_model)
                 continue
 
-            if event_type != "event_msg":
+            if event_type != "event_msg" or payload.get("type") != "token_count":
                 continue
-
-            payload = event.get("payload") or {}
-            if not isinstance(payload, dict) or payload.get("type") != "token_count":
-                continue
-
-            info = payload.get("info") or {}
+            info = payload.get("info")
             if not isinstance(info, dict):
                 continue
-
-            total_usage = info.get("total_token_usage") or {}
-            if not isinstance(total_usage, dict):
+            latest_model = normalized_bucket_value(
+                info.get("model"), normalized_bucket_value(payload.get("model"), latest_model)
+            )
+            total_usage = _codex_token_usage(info.get("total_token_usage"))
+            last_usage = _codex_token_usage(info.get("last_token_usage"))
+            if total_usage is None:
+                delta = last_usage
+                if delta is None:
+                    continue
+                # Identical counts alone are not a request identity: distinct
+                # timestamped calls can legitimately use the same token count.
+                identity = (event_timestamp, latest_model, *delta.values())
+                if event_timestamp is not None:
+                    if identity in seen_fallbacks:
+                        continue
+                    seen_fallbacks.add(identity)
+                accounted = {key: accounted.get(key, 0) + value for key, value in delta.items()}
+            else:
+                if event_timestamp is not None:
+                    identity = (event_timestamp, *total_usage.values())
+                    if identity in seen_snapshots:
+                        continue
+                    seen_snapshots.add(identity)
+                    if last_usage is not None:
+                        seen_fallbacks.add((event_timestamp, latest_model, *last_usage.values()))
+                # A smaller cumulative total starts a fresh accounting segment;
+                # it cannot erase prior use. Cached-only corrections are not a
+                # reset and must not count again when that counter recovers.
+                previous_total = cumulative.get("total_tokens", accounted.get("total_tokens", 0))
+                if total_usage["total_tokens"] < previous_total:
+                    accounted = {}
+                delta = {key: max(value - accounted.get(key, 0), 0) for key, value in total_usage.items()}
+                # Include fallback use in the baseline until a cumulative
+                # snapshot catches up, so confirmation never bills it twice.
+                accounted = {key: max(value, accounted.get(key, 0)) for key, value in total_usage.items()}
+                cumulative = total_usage
+            if not any(delta.values()):
                 continue
+            if event_timestamp is not None:
+                seen_fallbacks.add((event_timestamp, latest_model, *delta.values()))
+            events.append({
+                "model": latest_model,
+                "timestamp": event_timestamp or last_timestamp or activity_timestamp,
+                **delta,
+            })
 
-            input_tokens = safe_non_negative_int(total_usage.get("input_tokens"))
-            cached_tokens = safe_non_negative_int(total_usage.get("cached_input_tokens"))
-            output_tokens = safe_non_negative_int(total_usage.get("output_tokens"))
-            total_tokens = safe_non_negative_int(total_usage.get("total_tokens"))
-            if total_tokens == 0 and (input_tokens or cached_tokens or output_tokens):
-                total_tokens = input_tokens + output_tokens
-
-            if total_tokens == 0 and input_tokens == 0 and cached_tokens == 0 and output_tokens == 0:
-                continue
-
-            if activity_timestamp is None and event_timestamp is not None:
-                activity_timestamp = event_timestamp
-
-            latest_usage = {
-                "input_tokens": input_tokens,
-                "cached_tokens": cached_tokens,
-                "output_tokens": output_tokens,
-                "total_tokens": total_tokens,
-            }
-
-    if latest_usage is None:
+    if not events:
         return None
-
+    for event in events:
+        event["session_id"] = session_id
+        event["agent_cli"] = agent_cli
     return {
         "session_id": session_id,
         "agent_cli": normalized_bucket_value(agent_cli, "codex"),
-        "model": normalized_bucket_value(latest_model, DEFAULT_MODEL),
+        "model": latest_model,
         "timestamp": activity_timestamp,
-        **latest_usage,
+        **{
+            key: sum(event[key] for event in events)
+            for key in ("input_tokens", "cached_tokens", "output_tokens", "total_tokens")
+        },
+        "events": events,
     }
 
 
 def build_codex_session_contribution(
     session_path: Path,
     sessions_root: Path,
-    usage: dict[str, int | str | dt.datetime],
+    usage: dict[str, object],
     pricing_catalog: PricingCatalog,
 ) -> CodexContribution | None:
-    fallback_usage_date = codex_usage_date_from_path(session_path, sessions_root)
-    if fallback_usage_date is None:
-        return None
-
     activity_timestamp = usage.get("timestamp") if isinstance(usage.get("timestamp"), dt.datetime) else None
-    usage_date = activity_timestamp.date() if activity_timestamp is not None else fallback_usage_date
+    usage_date = (
+        activity_timestamp.date()
+        if activity_timestamp is not None
+        else codex_usage_date_from_path(session_path, sessions_root)
+    )
+    if usage_date is None:
+        return None
     if activity_timestamp is None:
         activity_timestamp = dt.datetime.combine(usage_date, dt.time(hour=0), tzinfo=LOCAL_TIMEZONE)
 
@@ -1153,8 +1248,35 @@ def build_codex_session_contribution(
         cost_to_nanodollars(priced.output_cost_usd),
         cost_to_nanodollars(priced.cached_cost_usd),
         cost_to_nanodollars(priced.total_cost_usd),
-        priced.cost_complete,
+        priced.cost_complete and (not total_tokens or bool(input_tokens or output_tokens or cached_tokens)),
     )
+
+
+def _codex_contribution_rows(contribution: CodexContribution) -> tuple[CodexContribution, ...]:
+    """Accept retained singleton history as well as event-aware contributions."""
+    if len(contribution) == 2 and contribution[0] == "codex-events-v1":
+        return tuple(contribution[1])
+    return (contribution,)
+
+
+def build_codex_session_contributions(
+    session_path: Path,
+    sessions_root: Path,
+    usage: dict[str, object],
+    pricing_catalog: PricingCatalog,
+) -> CodexContribution:
+    rows = usage.get("events")
+    if not isinstance(rows, list):
+        rows = [usage]
+    contributions = tuple(
+        contribution
+        for row in rows
+        if isinstance(row, dict)
+        and (
+            contribution := build_codex_session_contribution(session_path, sessions_root, row, pricing_catalog)
+        ) is not None
+    )
+    return "codex-events-v1", contributions
 
 
 def parse_codex_session_usage_cached(
@@ -1173,13 +1295,19 @@ def parse_codex_session_usage_cached(
     signature = (stat.st_size, stat.st_mtime_ns)
     if current_pricing_key is None:
         current_pricing_key = pricing_cache_key(pricing_catalog)
-    if cached is not None and cached[:2] == signature and cached[2] == current_pricing_key:
-        return cached[3]
+    parser_pricing_key = f"codex-events-v1|{current_pricing_key}"
+    if cached is not None and cached[:2] == signature and cached[2] == parser_pricing_key:
+        contribution = cached[3]
+        if contribution is None or (len(contribution) == 2 and contribution[0] == "codex-events-v1"):
+            return contribution
 
     path = session_path if isinstance(session_path, Path) else Path(session_path)
     usage = parse_codex_session_usage(path)
-    contribution = None if usage is None else build_codex_session_contribution(path, sessions_root, usage, pricing_catalog)
-    _CODEX_SESSION_USAGE_CACHE[cache_key] = (signature[0], signature[1], current_pricing_key, contribution)
+    contribution = (
+        None if usage is None
+        else build_codex_session_contributions(path, sessions_root, usage, pricing_catalog)
+    )
+    _CODEX_SESSION_USAGE_CACHE[cache_key] = (signature[0], signature[1], parser_pricing_key, contribution)
     _mark_persistent_cache_dirty()
     return contribution
 
@@ -1188,6 +1316,11 @@ def _reprice_codex_contribution(
     contribution: CodexContribution,
     pricing_catalog: PricingCatalog,
 ) -> CodexContribution:
+    if len(contribution) == 2 and contribution[0] == "codex-events-v1":
+        return "codex-events-v1", tuple(
+            _reprice_codex_contribution(row, pricing_catalog)
+            for row in _codex_contribution_rows(contribution)
+        )
     priced = pricing_catalog.price_usage(
         "codex",
         contribution[5],
@@ -1201,7 +1334,9 @@ def _reprice_codex_contribution(
         cost_to_nanodollars(priced.output_cost_usd),
         cost_to_nanodollars(priced.cached_cost_usd),
         cost_to_nanodollars(priced.total_cost_usd),
-        priced.cost_complete,
+        priced.cost_complete and (
+            not contribution[9] or bool(contribution[6] or contribution[7] or contribution[8])
+        ),
     )
 
 
@@ -1210,7 +1345,8 @@ def iter_observed_codex_contributions(
     pricing_catalog: PricingCatalog,
     current_pricing_key: str,
 ):
-    """Yield every observed log contribution, even after its source file is deleted."""
+    """Yield observed usage rows, including retained singleton and event history."""
+    parser_pricing_key = f"codex-events-v1|{current_pricing_key}"
     live_paths: list[str] = []
     for file_path in iter_jsonl_files(sessions_root):
         live_paths.append(os.fspath(file_path))
@@ -1227,16 +1363,17 @@ def iter_observed_codex_contributions(
         size, mtime_ns, stored_pricing_key, contribution = entry
         if contribution is None:
             continue
-        if stored_pricing_key != current_pricing_key:
+        if stored_pricing_key != parser_pricing_key:
             contribution = _reprice_codex_contribution(contribution, pricing_catalog)
             _CODEX_SESSION_USAGE_CACHE[cache_path] = (
                 size,
                 mtime_ns,
-                current_pricing_key,
+                parser_pricing_key,
                 contribution,
             )
             _mark_persistent_cache_dirty()
-        yield cache_path, contribution
+        for row in _codex_contribution_rows(contribution):
+            yield cache_path, row
 
 
 def collect_codex_usage_data(
@@ -1247,7 +1384,9 @@ def collect_codex_usage_data(
     activity_totals: dict[tuple[dt.date, int], ActivityTotals] = {}
     catalog = pricing_catalog or PricingCatalog.from_file(None)
     current_pricing_key = pricing_cache_key(catalog)
+    daily_sessions: dict[dt.date, set[str]] = {}
     bucket_sessions: dict[tuple[dt.date, str, str], set[str]] = {}
+    activity_sessions: dict[tuple[dt.date, int], set[str]] = {}
 
     for file_path, contribution in iter_observed_codex_contributions(
         sessions_root,
@@ -1279,7 +1418,7 @@ def collect_codex_usage_data(
             daily = DailyTotals(date=usage_date)
             daily.input_cost_usd = daily.output_cost_usd = daily.cached_cost_usd = daily.total_cost_usd = 0
             totals[usage_date] = daily
-        daily.sessions += 1
+        daily_sessions.setdefault(usage_date, set()).add(file_path)
         daily.input_tokens += input_tokens
         daily.output_tokens += output_tokens
         daily.cached_tokens += cached_tokens
@@ -1305,7 +1444,7 @@ def collect_codex_usage_data(
         breakdown.cached_cost_usd += cached_cost_usd
         breakdown.total_cost_usd += total_cost_usd
         breakdown.cost_complete = breakdown.cost_complete and cost_complete
-        bucket_sessions.setdefault((usage_date, agent_cli, model), set()).add(session_id)
+        bucket_sessions.setdefault((usage_date, agent_cli, model), set()).add(file_path)
 
         activity_key = (activity_date, activity_hour)
         activity = activity_totals.get(activity_key)
@@ -1313,7 +1452,7 @@ def collect_codex_usage_data(
             activity = ActivityTotals(date=activity_key[0], hour=activity_key[1])
             activity.input_cost_usd = activity.output_cost_usd = activity.cached_cost_usd = activity.total_cost_usd = 0
             activity_totals[activity_key] = activity
-        activity.sessions += 1
+        activity_sessions.setdefault(activity_key, set()).add(file_path)
         activity.input_tokens += input_tokens
         activity.output_tokens += output_tokens
         activity.cached_tokens += cached_tokens
@@ -1324,10 +1463,14 @@ def collect_codex_usage_data(
         activity.total_cost_usd += total_cost_usd
         activity.cost_complete = activity.cost_complete and cost_complete
 
+    # Counts are additive across source logs, not across snapshots. A resumed
+    # log counts once in each day/hour/model bucket in which it has new usage.
+    for usage_date, sessions in daily_sessions.items():
+        totals[usage_date].sessions = len(sessions)
+    for activity_key, sessions in activity_sessions.items():
+        activity_totals[activity_key].sessions = len(sessions)
     for (usage_date, agent_cli, model), sessions in bucket_sessions.items():
-        daily = totals.get(usage_date)
-        if daily is not None:
-            daily.breakdowns[(agent_cli, model)].sessions = len(sessions)
+        totals[usage_date].breakdowns[(agent_cli, model)].sessions = len(sessions)
 
     for daily in totals.values():
         _materialize_nanodollar_costs(daily)
@@ -2020,8 +2163,8 @@ def collect_claude_daily_totals(
     return totals
 
 
-def _pi_usage_rows_index(contribution: dict[str, object]) -> dict[tuple[str, str], dict[str, object]]:
-    indexed: dict[tuple[str, str], dict[str, object]] = {}
+def _pi_usage_rows_index(contribution: dict[str, object]) -> dict[tuple[str, str, bool], dict[str, object]]:
+    indexed: dict[tuple[str, str, bool], dict[str, object]] = {}
     usage_rows = contribution.get("usage_rows")
     if not isinstance(usage_rows, list):
         usage_rows = []
@@ -2054,7 +2197,7 @@ def _pi_usage_rows_index(contribution: dict[str, object]) -> dict[tuple[str, str
             "native_cost": _pi_native_cost_mapping(native_cost),
         }
         normalized_rows.append(normalized_row)
-        indexed[(date_value, model)] = normalized_row
+        indexed[(date_value, model, native_cost is not None)] = normalized_row
     contribution["usage_rows"] = normalized_rows
     return indexed
 
@@ -2080,7 +2223,7 @@ def _pi_activity_rows_index(contribution: dict[str, object]) -> dict[str, dict[s
 def apply_pi_event_to_contribution(
     contribution: dict[str, object],
     event: dict[str, object],
-    usage_rows: dict[tuple[str, str], dict[str, object]],
+    usage_rows: dict[tuple[str, str, bool], dict[str, object]],
     activity_rows: dict[str, dict[str, object]],
 ) -> None:
     event_type = event.get("type")
@@ -2089,6 +2232,9 @@ def apply_pi_event_to_contribution(
 
     if event_type == "session":
         contribution["session_id"] = normalized_bucket_value(event.get("id"), session_id)
+        cwd = normalized_bucket_value(event.get("cwd"), "")
+        if cwd:
+            contribution["project_id"] = opaque_identity("project", os.path.normpath(cwd))
         return
 
     if event_type == "model_change":
@@ -2122,7 +2268,7 @@ def apply_pi_event_to_contribution(
         total_tokens = input_tokens + output_tokens + cached_tokens
 
     usage_bucket = usage_rows.setdefault(
-        (usage_date, model),
+        (usage_date, model, normalize_native_cost(usage.get("cost")) is not None),
         {
             "date": usage_date,
             "model": model,
@@ -2251,12 +2397,12 @@ def parse_pi_session_contribution_cached(file_path) -> dict[str, object]:
     cache_key = os.fspath(file_path)
     cached = _PI_SESSION_RECORDS_CACHE.get(cache_key)
     signature = (stat.st_size, stat.st_mtime_ns)
-    if cached is not None and cached[:2] == signature:
-        contribution = cached[2]
-        return contribution if isinstance(contribution, dict) else empty_pi_contribution(stem)
+    identity_current = cached is not None and isinstance(cached[2], dict) and cached[2].get("identity_schema") == 2
+    if identity_current and cached[:2] == signature:
+        return cached[2]
 
     path = file_path if isinstance(file_path, Path) else Path(file_path)
-    if cached is not None and isinstance(cached[2], dict) and can_resume_pi_contribution(path, stat.st_size, cached[0], cached[2]):
+    if identity_current and can_resume_pi_contribution(path, stat.st_size, cached[0], cached[2]):
         contribution = parse_pi_session_contribution(path, cached[2], start_offset=safe_non_negative_int(cached[2].get("offset")))
     else:
         contribution = parse_pi_session_contribution(path)
@@ -2386,6 +2532,23 @@ def collect_pi_usage_data(
             breakdown.cost_complete = breakdown.cost_complete and cost_complete
             daily_sessions.setdefault(usage_date, set()).add(session_id)
             bucket_sessions.setdefault((usage_date, agent_cli, model), set()).add(session_id)
+            project_key = str(contribution.get("project_id") or "")
+            session_key = opaque_identity("session", session_id) if contribution.get("identity_schema") == 2 else ""
+            daily.investigation_rows.append({
+                "agent_cli": agent_cli, "model": model,
+                "project_id": project_key,
+                "project_label": f"Project {project_key[:8]}" if project_key else "Unassigned / legacy",
+                "session_id": session_key,
+                "session_label": f"Session {session_key[:8]}" if session_key else "Unsupported / legacy",
+                "input_tokens": input_tokens, "output_tokens": output_tokens,
+                "cached_tokens": cached_tokens, "total_tokens": total_tokens,
+                "input_cost_usd": input_cost / NANODOLLARS_PER_DOLLAR,
+                "output_cost_usd": output_cost / NANODOLLARS_PER_DOLLAR,
+                "cached_cost_usd": cached_cost / NANODOLLARS_PER_DOLLAR,
+                "total_cost_usd": total_cost / NANODOLLARS_PER_DOLLAR,
+                "cost_complete": cost_complete,
+                "cost_source": "native" if priced_cost is not None else ("rate_card" if cost_complete else "unpriced"),
+            })
 
             activity = session_activity.get(usage_date)
             if activity is None:

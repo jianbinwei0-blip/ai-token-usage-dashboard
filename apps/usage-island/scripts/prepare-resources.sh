@@ -13,3 +13,13 @@ fi
 if ! cmp -s "$SOURCE" "$DESTINATION"; then
   cp "$SOURCE" "$DESTINATION"
 fi
+
+SOURCE="$REPO_ROOT/scripts/dashboard_core/settings.py"
+DESTINATION="$APP_ROOT/Sources/UsageIslandApp/Resources/Bridge/dashboard_settings.py"
+if [[ ! -f "$SOURCE" ]]; then
+  printf 'Canonical shared settings reader missing: %s\n' "$SOURCE" >&2
+  exit 1
+fi
+if ! cmp -s "$SOURCE" "$DESTINATION"; then
+  cp "$SOURCE" "$DESTINATION"
+fi

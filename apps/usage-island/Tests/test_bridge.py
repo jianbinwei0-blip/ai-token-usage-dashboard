@@ -18,6 +18,15 @@ import usage_bridge as bridge
 
 class BridgeTests(unittest.TestCase):
     def setUp(self):
+        self.scratch = tempfile.TemporaryDirectory()
+        self.addCleanup(self.scratch.cleanup)
+        self.home = Path(self.scratch.name)
+        env_patch = patch.dict(os.environ, {"HOME": str(self.home)}, clear=True)
+        env_patch.start()
+        self.addCleanup(env_patch.stop)
+        home_patch = patch.object(bridge, "HOME", self.home)
+        home_patch.start()
+        self.addCleanup(home_patch.stop)
         self.now = dt.datetime(2026, 10, 26, 22, 30, tzinfo=dt.timezone.utc)
         self.snapshot = {
             "version": 3, "generated_at": self.now.isoformat(), "health": "ok",
@@ -51,6 +60,19 @@ class BridgeTests(unittest.TestCase):
         })
         self.assertNotIn("5h", result["text"])
         self.assertEqual(result["providers"], ["codex", "claude", "pi", "dsh"])
+
+    def test_cost_sources_explain_the_same_scoped_canonical_coverage(self):
+        self.snapshot["range"].update({"from": "2026-10-01", "to": "2026-10-26"})
+        self.snapshot["quality"].update({"pricing_version": "fixture-rate-card", "cost_sources": {
+            "native": {"total_tokens": 110, "total_cost_usd": 0.5},
+            "rate_card": {"total_tokens": 220, "total_cost_usd": 0.003},
+            "unpriced": {"total_tokens": 33, "total_cost_usd": 0},
+        }})
+        explanation = self.result()["cost_explanation"]
+        for expected in ("Native-reported 110", "rate-card-derived 220", "unpriced 33", "fixture-rate-card",
+                         "2026-10-01", "2026-10-26", "not an invoice"):
+            self.assertIn(expected, explanation)
+        self.assertEqual(explanation, bridge.formatter.cost_explanation(self.snapshot))
 
     def test_bundled_formatter_matches_repository_source(self):
         canonical = Path(__file__).resolve().parents[3] / "scripts/dashboard_core/tmux_status.py"
@@ -219,7 +241,7 @@ class BridgeTests(unittest.TestCase):
             self.assertTrue(bridge.refresh_cache())
         args, kwargs = run.call_args
         command = args[0]
-        self.assertEqual(command[command.index("--cache-file") + 1], str(bridge.CACHE))
+        self.assertEqual(command[command.index("--cache-file") + 1], str(bridge.cache_path(bridge.configuration())))
         self.assertEqual(command[command.index("--scope") + 1], "combined")
         self.assertEqual(command[command.index("--range") + 1], "mtd")
         self.assertEqual(command[command.index("--refresh-interval-minutes") + 1], "5")
@@ -266,6 +288,109 @@ class BridgeTests(unittest.TestCase):
             bridge.run_command([sys.executable, "-c", "import time; time.sleep(10)"], timeout=0.05)
         self.assertLess(time.monotonic() - started, 3)
         self.assertFalse(bridge.ACTIVE_CHILDREN)
+
+
+class SharedSettingsBridgeTests(unittest.TestCase):
+    def setUp(self):
+        self.scratch = tempfile.TemporaryDirectory()
+        self.addCleanup(self.scratch.cleanup)
+        self.home = Path(self.scratch.name)
+        env_patch = patch.dict(os.environ, {"HOME": str(self.home)}, clear=True)
+        env_patch.start()
+        self.addCleanup(env_patch.stop)
+        self.settings_file = bridge.settings_module.default_settings_path(home=self.home)
+        self.settings_file.parent.mkdir(parents=True)
+        self.runtime = self.home / "custom-runtime"
+
+    def save(self, **values):
+        self.settings_file.write_text(json.dumps(dict(version=1, runtime_dir=str(self.runtime), **values)))
+
+    def test_reader_matches_canonical_source(self):
+        canonical = Path(__file__).resolve().parents[3] / "scripts/dashboard_core/settings.py"
+        self.assertEqual(Path(bridge.settings_module.__file__).read_bytes(), canonical.read_bytes())
+
+    def test_finder_and_shell_share_saved_runtime_roots_and_url(self):
+        self.save(dashboard_url="http://localhost:9321/custom", pricing_file="~/prices.json",
+                  codex_sessions_root="~/source-codex", claude_projects_root="~/source-claude",
+                  pi_agent_root="~/source-pi", dsh_home="~/source-dsh")
+        finder = bridge.configuration()
+        with patch.dict(os.environ, {"TERM": "xterm-256color", "SHELL": "/bin/zsh"}):
+            shell = bridge.configuration()
+        self.assertEqual(finder, shell)
+        self.assertEqual(finder.runtime_dir, self.runtime)
+        self.assertEqual(finder.dashboard_url, "http://localhost:9321/custom")
+        with patch.object(bridge, "run_command", return_value=(0, "AI")) as run:
+            self.assertTrue(bridge.refresh_cache())
+        args, kwargs = run.call_args
+        self.assertEqual(kwargs["cwd"], self.runtime)
+        self.assertEqual(args[0][1], str(self.runtime / "scripts/render_tmux_status.py"))
+        self.assertEqual(kwargs["env"]["AI_USAGE_PRICING_FILE"], str(self.home / "prices.json"))
+        self.assertEqual(kwargs["env"]["AI_USAGE_CODEX_SESSIONS_ROOT"], str(self.home / "source-codex"))
+        self.assertEqual(kwargs["env"]["AI_USAGE_DASHBOARD_URL"], finder.dashboard_url)
+        self.assertNotIn("AI_USAGE_DASHBOARD_HTML", kwargs["env"])  # normal launcher seeds disposable HTML
+        self.assertNotIn("AI_USAGE_PARSE_CACHE_FILE", kwargs["env"])  # do not pin a pre-migration history path
+
+    def test_explicit_pricing_beats_saved_and_conventional_files(self):
+        conventional = self.home / ".config/ai-token-usage-dashboard/pricing.json"
+        conventional.parent.mkdir(parents=True, exist_ok=True)
+        conventional.write_text("not inspected")
+        self.save(pricing_file="~/saved-pricing.json")
+        self.assertEqual(bridge.environment()["AI_USAGE_PRICING_FILE"], str(self.home / "saved-pricing.json"))
+        for explicit in [str(self.home / "explicit-pricing.json"), ""]:
+            with patch.dict(os.environ, {"AI_USAGE_PRICING_FILE": explicit}):
+                self.assertEqual(bridge.environment()["AI_USAGE_PRICING_FILE"], explicit)
+        self.save(pricing_file=None)
+        self.assertEqual(bridge.environment()["AI_USAGE_PRICING_FILE"], "")
+
+    def test_explicit_runtime_cache_and_output_overrides_survive(self):
+        self.save()
+        explicit = {
+            "AI_USAGE_DASHBOARD_DIR": str(self.home / "explicit-runtime"),
+            "AI_USAGE_CACHE_FILE": str(self.home / "explicit-cache.json"),
+            "AI_USAGE_DASHBOARD_HTML": str(self.home / "explicit.html"),
+            "AI_USAGE_PARSE_CACHE_FILE": str(self.home / "retained.json"),
+        }
+        with patch.dict(os.environ, explicit), patch.object(bridge, "run_command", return_value=(0, "AI")) as run:
+            self.assertTrue(bridge.refresh_cache())
+        command = run.call_args.args[0]
+        self.assertEqual(command[command.index("--cache-file") + 1], explicit["AI_USAGE_CACHE_FILE"])
+        self.assertEqual(run.call_args.kwargs["cwd"], Path(explicit["AI_USAGE_DASHBOARD_DIR"]))
+        for name, value in explicit.items():
+            self.assertEqual(run.call_args.kwargs["env"][name], value)
+
+    def stage_bridge(self):
+        resource = self.home / "packaged-bridge"
+        resource.mkdir()
+        for name, source in {
+            "usage_bridge.py": Path(bridge.__file__),
+            "dashboard_status_formatter.py": Path(bridge.formatter.__file__),
+            "dashboard_settings.py": Path(bridge.settings_module.__file__),
+        }.items():
+            (resource / name).write_bytes(source.read_bytes())
+        return resource / "usage_bridge.py"
+
+    def test_packaged_bridge_returns_custom_url_without_cache_or_collector(self):
+        self.save(dashboard_url="http://127.0.0.1:9321/custom")
+        script = self.stage_bridge()
+        before = self.settings_file.read_bytes()
+        result = subprocess.run([sys.executable, str(script), "dashboard-url"],
+                                env=dict(os.environ, PYTHONDONTWRITEBYTECODE="1"), capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(json.loads(result.stdout), {"dashboard_url": "http://127.0.0.1:9321/custom"})
+        self.assertFalse(self.runtime.exists())
+        self.assertEqual(self.settings_file.read_bytes(), before)
+
+    def test_invalid_settings_do_not_collect_or_open_an_unsafe_url(self):
+        self.save(dashboard_url="https://remote.invalid?private-secret")
+        script = self.stage_bridge()
+        result = subprocess.run([sys.executable, str(script), "dashboard-url"],
+                                env=dict(os.environ, PYTHONDONTWRITEBYTECODE="1"), capture_output=True, text=True)
+        self.assertEqual(result.returncode, 2)
+        self.assertNotIn("private-secret", result.stderr + result.stdout)
+        with patch.object(bridge, "run_command") as run, patch.object(bridge, "read_cache") as read:
+            self.assertFalse(bridge.refresh_cache())
+            run.assert_not_called()
+            read.assert_not_called()
 
 
 if __name__ == "__main__":

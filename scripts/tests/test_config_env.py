@@ -1,5 +1,6 @@
 import os
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -10,6 +11,13 @@ from dashboard_core.config import DashboardConfig
 
 
 class DashboardConfigEnvTests(unittest.TestCase):
+    def setUp(self):
+        scratch = tempfile.TemporaryDirectory()
+        self.addCleanup(scratch.cleanup)
+        home = patch.object(Path, "home", return_value=Path(scratch.name))
+        home.start()
+        self.addCleanup(home.stop)
+
     def test_reads_ai_usage_env_names(self) -> None:
         repo_root = Path("/tmp/repo")
         with patch.dict(
@@ -46,7 +54,7 @@ class DashboardConfigEnvTests(unittest.TestCase):
 
         self.assertEqual(cfg.host, "127.0.0.1")
         self.assertEqual(cfg.port, 8765)
-        self.assertEqual(cfg.dashboard_html, repo_root / "dashboard" / "index.html")
+        self.assertEqual(cfg.dashboard_html, repo_root / "tmp" / "index.runtime.html")
         self.assertEqual(cfg.sessions_root, Path.home() / ".codex" / "sessions")
         self.assertEqual(cfg.claude_projects_root, Path.home() / ".claude" / "projects")
         self.assertEqual(cfg.pi_agent_root, Path.home() / ".pi" / "agent")
